@@ -16,7 +16,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Function;
@@ -102,19 +101,19 @@ public final class BakedAnimationCache {
     static ArrayList<com.elfmcys.ysm.proto.mixel.asset.model.data.Animation> flatten(
             Iterable<? extends Map.Entry<String,
                     AnimationFile>> animationFiles) throws IOException {
-        var result = new ArrayList<com.elfmcys.ysm.proto.mixel.asset.model.data.Animation>();
-        var names = new HashSet<String>();
+        var result = new LinkedHashMap<String,
+                com.elfmcys.ysm.proto.mixel.asset.model.data.Animation>();
         for (var file : animationFiles) {
             for (var animation : file.getValue().animations()) {
-                if (animation.name().isBlank() || !names.add(animation.name())) {
+                if (animation.name().isBlank()) {
                     throw AssetLoadException.content(
-                            "Duplicate or empty animation name in animation set: "
+                            "Empty animation name in animation set: "
                                     + animation.name());
                 }
-                result.add(animation);
+                result.put(animation.name(), animation);
             }
         }
-        return result;
+        return new ArrayList<>(result.values());
     }
 
     static Hash256 bakeInputHash(Hash256 containerId, Hash256 definitionHash,

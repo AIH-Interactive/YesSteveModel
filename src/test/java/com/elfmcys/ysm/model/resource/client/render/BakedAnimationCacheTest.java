@@ -6,7 +6,6 @@ import com.elfmcys.ysm.model.storage.AtomicSharedCache;
 import com.elfmcys.ysm.proto.mixel.asset.model.data.Animation;
 import com.elfmcys.ysm.proto.mixel.asset.model.data.AnimationFile;
 import com.elfmcys.ysm.proto.mixel.asset.model.data.LoopType;
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -19,7 +18,6 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BakedAnimationCacheTest {
@@ -35,9 +33,17 @@ class BakedAnimationCacheTest {
     }
 
     @Test
-    void rejectsDuplicateAnimationNameWithinOneAnimationSet() {
-        assertThrows(IOException.class, () -> BakedAnimationCache.flatten(List.of(
-                animationFile("main"), animationFile("extra"))));
+    void loadsDuplicateAnimationNameWithinOneAnimationSet(@TempDir Path temp) {
+        var cacheRoot = temp.resolve("cache");
+        var cache = new BakedAnimationCache(cacheRoot, new AtomicSharedCache(cacheRoot));
+
+        try (var store = assertDoesNotThrow(() -> cache.loadOrBake(
+                container(1), "player", "main", hash(2),
+                List.of(animationFile("main"), animationFile("extra")), null,
+                ignored -> ModelResourceFailureGate.none()))) {
+            assertEquals(1, store.size());
+            assertTrue(store.containsKey("parallel0"));
+        }
     }
 
     @Test
