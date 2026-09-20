@@ -1,50 +1,61 @@
 package com.elfmcys.ysm.format.schema.model.views;
 
-import com.elfmcys.ysm.natives.sound.SoundFormat;
-import com.elfmcys.ysm.natives.sound.SoundStream;
-import com.elfmcys.ysm.format.schema.file.ChunkDataSource;
 import com.elfmcys.ysm.format.schema.file.AssetFileView;
-import mixel.common.SoundOuterClass;
-import mixel.asset.strings.StringDataOuterClass;
-import mixel.manifest.asset.CommonOuterClass;
-import com.elfmcys.ysm.task.TaskContext;
-import org.jetbrains.annotations.Nullable;
-
-import java.util.HashMap;
-import java.util.concurrent.CompletableFuture;
+import com.elfmcys.ysm.format.schema.file.ChunkDataSource;
+import com.elfmcys.ysm.proto.mixel.asset.strings.StringData;
+import com.elfmcys.ysm.proto.mixel.manifest.asset.Common;
+import java.io.IOException;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.function.BooleanSupplier;
 
 public class CommonAssetView {
     private final AssetFileView view;
-    private final HashMap<String, SoundOuterClass.Sound> sounds;
+    private final Map<String, SoundStreamView> sounds;
     private final int stringsBlobId;
 
-    public CommonAssetView(CommonOuterClass.Common commonAsset, AssetFileView view) {
+    public CommonAssetView(Common commonAsset,
+                           AssetFileView view) throws IOException {
         this.view = view;
-
-        this.sounds = new HashMap<>(commonAsset.hasSounds() ? commonAsset.getSounds().length() : 0);
-        if (commonAsset.hasSounds()) {
-            for (var sound : commonAsset.getSounds()) {
-                this.sounds.put(sound.getName(), sound);
+        var byName = new LinkedHashMap<String, SoundStreamView>(commonAsset.sounds().size());
+        var byStream = new LinkedHashMap<Integer, SoundStreamView>();
+        for (var sound : commonAsset.sounds()) {
+            var stream = SoundStreamView.create(sound, view);
+            if (byName.putIfAbsent(stream.name(), stream) != null) {
+                throw new IOException("Duplicate sound name: " + stream.name());
+            }
+            var previous = byStream.putIfAbsent(stream.streamId(), stream);
+            if (previous != null && !previous.hasSameMedia(stream)) {
+                throw new IOException("Conflicting descriptors for sound stream "
+                        + Integer.toUnsignedLong(stream.streamId()));
             }
         }
-
-        this.stringsBlobId = commonAsset.hasStringsBlobId() ? commonAsset.getStringsBlobId() : 0;
+        this.sounds = Map.copyOf(byName);
+        this.stringsBlobId = commonAsset.stringsBlobId();
     }
 
-    public CompletableFuture<@Nullable SoundStream> openSoundStream(TaskContext ctx, ChunkDataSource source, String soundName) {
-        var sound = sounds.get(soundName);
-        if (sound == null) {
-            return CompletableFuture.completedFuture(null);
-        }
-        return view.openStream(ctx, source, sound.getStreamId()).thenApply(stream -> {
-            if (stream != null) {
-                return new SoundStream(stream, SoundFormat.valueOf(sound.getEncoding()), sound.getSampleRate(), sound.getSamples(), sound.getChannels());
+    public Map<String, SoundStreamView> sounds() {
+        return sounds;
+    }
+
+    public void validateSoundContent(BooleanSupplier cancelled,
+                                     ChunkDataSource source) throws IOException {
+        var validated = new HashSet<Integer>();
+        for (var sound : sounds.values()) {
+            if (!validated.add(sound.streamId())) {
+                continue;
             }
-            return null;
-        });
+            try (var ignored = sound.readVerified(cancelled, source)) {
+                // Admission is the validation boundary for callers that do not claim M2.
+            }
+        }
     }
 
-    public CompletableFuture<StringDataOuterClass.StringData> readStringData(TaskContext ctx, ChunkDataSource source) {
-        return view.readProtoBlob(ctx, source, stringsBlobId, StringDataOuterClass.StringData::parseFrom);
+    public StringData readStringData(BooleanSupplier cancelled,
+                                                          ChunkDataSource source)
+            throws IOException {
+        return view.readProtoBlob(cancelled, source, stringsBlobId,
+                StringData::parseFrom);
     }
 }

@@ -284,22 +284,27 @@ public final class RenderUtil {
             boolean disablePreviewRotation,
             boolean disableEquipments) {
         setRenderingInInventory(true);
+        try {
+            renderModelInGuiStateful(pPosX, pPosY, pScale, partialTicks,
+                    animatableEntity, renderer, disablePreviewRotation, disableEquipments);
+        } finally {
+            setRenderingInInventory(false);
+        }
+    }
+
+    private static <T extends LivingEntity,
+            TAnimatable extends CustomHumanoidEntity<T>> void renderModelInGuiStateful(
+            float pPosX,
+            float pPosY,
+            float pScale,
+            float partialTicks,
+            TAnimatable animatableEntity,
+            GeoReplacedEntityRenderer<T, TAnimatable> renderer,
+            boolean disablePreviewRotation,
+            boolean disableEquipments) {
         var living = animatableEntity.getEntity();
 
         PoseStack viewStack = RenderSystem.getModelViewStack();
-        viewStack.pushPose();
-        viewStack.translate(pPosX, pPosY, 1050.0D);
-        viewStack.scale(1.0F, 1.0F, -1.0F);
-        RenderSystem.applyModelViewMatrix();
-
-        PoseStack poseStack = new PoseStack();
-        poseStack.translate(0.0D, disablePreviewRotation ? 5.5 : 0, 1000.0D);
-        poseStack.scale(pScale, pScale, pScale);
-        Quaternionf zp = Axis.ZP.rotationDegrees(180.0F);
-        Quaternionf xp = Axis.XP.rotationDegrees(disablePreviewRotation ? 0 : -10);
-        zp.mul(xp);
-        poseStack.mulPose(zp);
-
         float yBodyRot = living.yBodyRot;
         float yBodyRotO = living.yBodyRotO;
         float yRot = living.getYRot();
@@ -308,24 +313,44 @@ public final class RenderUtil {
         float xRotO = living.xRotO;
         float yHeadRotO = living.yHeadRotO;
         float yHeadRot = living.yHeadRot;
+        ItemStack[] itemStacks = null;
+        EntityRenderDispatcher dispatcher = null;
+        MultiBufferSource.BufferSource bufferSource = null;
+        boolean viewPushed = false;
+        boolean shadowDisabled = false;
+        try {
+            viewStack.pushPose();
+            viewPushed = true;
+            viewStack.translate(pPosX, pPosY, 1050.0D);
+            viewStack.scale(1.0F, 1.0F, -1.0F);
+            RenderSystem.applyModelViewMatrix();
 
-        ItemStack[] itemStacks;
+            PoseStack poseStack = new PoseStack();
+            poseStack.translate(0.0D, disablePreviewRotation ? 5.5 : 0, 1000.0D);
+            poseStack.scale(pScale, pScale, pScale);
+            Quaternionf zp = Axis.ZP.rotationDegrees(180.0F);
+            Quaternionf xp = Axis.XP.rotationDegrees(disablePreviewRotation ? 0 : -10);
+            zp.mul(xp);
+            poseStack.mulPose(zp);
+
         if (disableEquipments && living instanceof Player player) {
             itemStacks = new ItemStack[EquipmentSlot.values().length];
             int i = 0;
             for (EquipmentSlot slot : EquipmentSlot.values()) {
                 if (slot == EquipmentSlot.MAINHAND) {
+                    itemStacks[i] = player.getItemBySlot(slot);
                     player.getInventory().items.set(player.getInventory().selected, ItemStack.EMPTY);
                 } else if (slot == EquipmentSlot.OFFHAND) {
+                    itemStacks[i] = player.getItemBySlot(slot);
                     player.getInventory().offhand.set(0, ItemStack.EMPTY);
                 } else {
                     var armor = player.getInventory().armor;
                     if (armor.size() <= slot.getIndex()) {
                         continue;
                     }
+                    itemStacks[i] = player.getItemBySlot(slot);
                     armor.set(slot.getIndex(), ItemStack.EMPTY);
                 }
-                itemStacks[i] = player.getItemBySlot(slot);
                 i++;
             }
         } else {
@@ -351,50 +376,69 @@ public final class RenderUtil {
         }
 
         Lighting.setupForEntityInInventory();
-        EntityRenderDispatcher dispatcher = Minecraft.getInstance().getEntityRenderDispatcher();
+        dispatcher = Minecraft.getInstance().getEntityRenderDispatcher();
         xp.conjugate();
         dispatcher.overrideCameraOrientation(xp);
         dispatcher.setRenderShadow(false);
-        MultiBufferSource.BufferSource bufferSource = Minecraft.getInstance().renderBuffers().bufferSource();
+        shadowDisabled = true;
+        bufferSource = Minecraft.getInstance().renderBuffers().bufferSource();
+        var drawBuffer = bufferSource;
         RenderSystem.runAsFancy(() -> {
-            renderer.renderAnimatableEntity(animatableEntity, 0, partialTicks, poseStack, bufferSource, 0xf000f0);
+            renderer.renderAnimatableEntity(animatableEntity, 0, partialTicks, poseStack, drawBuffer, 0xf000f0);
         });
-        bufferSource.endBatch();
-        dispatcher.setRenderShadow(true);
-
-        living.yBodyRot = yBodyRot;
-        living.yBodyRotO = yBodyRotO;
-        living.setYRot(yRot);
-        living.yRotO = yRotO;
-        living.setXRot(xRot);
-        living.xRotO = xRot;
-        living.yHeadRotO = yHeadRotO;
-        living.yHeadRot = yHeadRot;
-
-        if (itemStacks != null) {
-            Player player = (Player) living;
-            int i = 0;
-            for (EquipmentSlot slot : EquipmentSlot.values()) {
-                ItemStack itemStack = itemStacks[i];
-                if (slot == EquipmentSlot.MAINHAND) {
-                    player.getInventory().items.set(player.getInventory().selected, itemStack);
-                } else if (slot == EquipmentSlot.OFFHAND) {
-                    player.getInventory().offhand.set(0, itemStack);
-                } else {
-                    var armor = player.getInventory().armor;
-                    if (armor.size() <= slot.getIndex()) {
-                        continue;
-                    }
-                    armor.set(slot.getIndex(), itemStack);
+        } finally {
+            try {
+                if (bufferSource != null) {
+                    bufferSource.endBatch();
                 }
-                i++;
+            } finally {
+                try {
+                    if (shadowDisabled) {
+                        dispatcher.setRenderShadow(true);
+                    }
+                } finally {
+                    living.yBodyRot = yBodyRot;
+                    living.yBodyRotO = yBodyRotO;
+                    living.setYRot(yRot);
+                    living.yRotO = yRotO;
+                    living.setXRot(xRot);
+                    living.xRotO = xRotO;
+                    living.yHeadRotO = yHeadRotO;
+                    living.yHeadRot = yHeadRot;
+                    try {
+                        if (itemStacks != null) {
+                            Player player = (Player) living;
+                            int i = 0;
+                            for (EquipmentSlot slot : EquipmentSlot.values()) {
+                                ItemStack itemStack = itemStacks[i];
+                                if (slot == EquipmentSlot.MAINHAND) {
+                                    player.getInventory().items.set(
+                                            player.getInventory().selected, itemStack);
+                                } else if (slot == EquipmentSlot.OFFHAND) {
+                                    player.getInventory().offhand.set(0, itemStack);
+                                } else {
+                                    var armor = player.getInventory().armor;
+                                    if (armor.size() <= slot.getIndex()) {
+                                        continue;
+                                    }
+                                    armor.set(slot.getIndex(), itemStack);
+                                }
+                                i++;
+                            }
+                        }
+                    } finally {
+                        try {
+                            if (viewPushed) {
+                                viewStack.popPose();
+                                RenderSystem.applyModelViewMatrix();
+                            }
+                        } finally {
+                            Lighting.setupFor3DItems();
+                        }
+                    }
+                }
             }
         }
-
-        viewStack.popPose();
-        RenderSystem.applyModelViewMatrix();
-        Lighting.setupFor3DItems();
-        setRenderingInInventory(false);
     }
 
     public static void renderExtraPlayerEntity(GuiGraphics pGuiGraphics, LocalPlayer player, double posX, double posY, float scale, float yawOffset, int z, float partialTicks) {

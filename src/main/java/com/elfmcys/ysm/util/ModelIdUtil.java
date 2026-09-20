@@ -17,10 +17,6 @@ public final class ModelIdUtil {
             ".mxc"
     );
 
-    public static int getModelHashShort(String modelHash) {
-        return Integer.parseUnsignedInt(modelHash.substring(0, 8), 16);
-    }
-
     /**
      * "dir1/dir2/id" -> {"id", "dir1/dir2/"}
      * <p/>

@@ -1,51 +1,109 @@
 package com.elfmcys.ysm.natives.sound;
 
-import javax.sound.sampled.UnsupportedAudioFileException;
+import com.elfmcys.ysm.util.CleanerUtil;
+
+import java.lang.ref.Cleaner;
+import java.lang.ref.Reference;
 import java.nio.ByteBuffer;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-public class OpusDecoder {
+public final class OpusDecoder implements AutoCloseable {
+    public static final int ERROR = -1;
+    public static final int NEED_INPUT = -2;
+
     private final long ptr;
+    private final State state;
+    private final Cleaner.Cleanable cleanable;
+    private boolean inputEnded;
 
-    @SuppressWarnings("unused")
-    private volatile ByteBuffer soundData;
-
-    public OpusDecoder() {
-        var ptr = this.ptr = nCreate();
-        if (ptr == 0) {
-            throw new OutOfMemoryError();
+    public OpusDecoder(long expectedFrames) {
+        if (expectedFrames < 0) {
+            throw new IllegalArgumentException("expectedFrames must not be negative");
         }
+        ptr = nCreate(expectedFrames);
+        if (ptr == 0) {
+            throw new OutOfMemoryError("Failed to allocate Opus decoder");
+        }
+        state = new State(ptr);
+        cleanable = CleanerUtil.ref(this, state, State::clean);
     }
 
-    public void init(ByteBuffer data) throws UnsupportedAudioFileException {
+    public void feed(ByteBuffer data) {
+        checkOpen();
+        if (inputEnded) {
+            throw new IllegalStateException("Opus input has ended");
+        }
         if (!data.isDirect()) {
             throw new IllegalArgumentException("input is not direct data");
         }
-        if (!nInit(ptr, data.slice())) {
-            throw new UnsupportedAudioFileException();
+        try {
+            if (!nFeed(ptr, data.slice())) {
+                throw new IllegalArgumentException("Native Opus decoder rejected input");
+            }
+        } finally {
+            Reference.reachabilityFence(this);
+            Reference.reachabilityFence(data);
         }
-        this.soundData = data;
     }
 
-    public int decode(ByteBuffer dst) {
-        if (!dst.isDirect()) {
+    public void endInput() {
+        checkOpen();
+        if (!inputEnded) {
+            try {
+                nEndInput(ptr);
+                inputEnded = true;
+            } finally {
+                Reference.reachabilityFence(this);
+            }
+        }
+    }
+
+    public int decode(ByteBuffer destination) {
+        checkOpen();
+        if (!destination.isDirect()) {
             throw new IllegalArgumentException("output is not direct data");
         }
-        return nDecode(ptr, dst.slice());
+        try {
+            return nDecode(ptr, destination.slice());
+        } finally {
+            Reference.reachabilityFence(this);
+            Reference.reachabilityFence(destination);
+        }
     }
 
-    public void reset() {
-        nReset(ptr);
-        this.soundData = null;
+    @Override
+    public void close() {
+        cleanable.clean();
     }
 
-    public void destroy() {
-        nDestroy(ptr);
+    private void checkOpen() {
+        if (!state.open.get()) {
+            throw new IllegalStateException("Decoder is closed");
+        }
     }
 
-    // TODO: stream
-    private native static long nCreate();
-    private native static boolean nInit(long ptr, ByteBuffer data);
-    private native static int nDecode(long ptr, ByteBuffer dst);
-    private native static void nReset(long ptr);
-    private native static void nDestroy(long ptr);
+    private static final class State {
+        private final long ptr;
+        private final AtomicBoolean open = new AtomicBoolean(true);
+
+        private State(long ptr) {
+            this.ptr = ptr;
+        }
+
+        private void clean() {
+            if (open.compareAndSet(true, false)) {
+                nDestroy(ptr);
+            }
+        }
+    }
+
+    private static native long nCreate(long expectedFrames);
+
+    private static native boolean nFeed(long ptr, ByteBuffer data);
+
+    private static native void nEndInput(long ptr);
+
+    private static native int nDecode(long ptr, ByteBuffer destination);
+
+    private static native void nDestroy(long ptr);
 }

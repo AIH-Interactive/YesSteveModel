@@ -2,8 +2,8 @@ package com.elfmcys.ysm.client.controller;
 
 import com.elfmcys.ysm.client.entity.CustomEntity;
 import com.elfmcys.ysm.client.entity.IPreviewEntity;
-import com.elfmcys.ysm.client.model.CommonAsset;
-import com.elfmcys.ysm.client.model.PlayerModelResources;
+import com.elfmcys.ysm.model.resource.client.CommonAsset;
+import com.elfmcys.ysm.model.resource.client.PlayerModelResources;
 import com.elfmcys.ysm.geckolib3.core.controller.IAnimationController;
 import net.minecraft.world.entity.EquipmentSlot;
 import org.apache.commons.lang3.function.TriFunction;

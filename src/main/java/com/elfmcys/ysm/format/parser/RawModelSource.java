@@ -2,7 +2,6 @@ package com.elfmcys.ysm.format.parser;
 
 import com.elfmcys.ysm.buffer.NativeBuffer;
 import com.elfmcys.ysm.format.vfs.VirtualFileSystem;
-import com.elfmcys.ysm.natives.Blake3;
 import com.google.gson.Gson;
 import com.google.gson.stream.JsonReader;
 import org.apache.commons.lang3.StringUtils;
@@ -41,7 +40,7 @@ final class RawModelSource {
         if (!StringUtils.isBlank(path)) {
             var borrowed = vfs.getFile(path);
             if (borrowed != null) {
-                canonicalizer.add(type, normalizePath(path), Blake3.computeHash(borrowed));
+                canonicalizer.add(type, path, borrowed);
                 return Optional.of(borrowed);
             }
         }

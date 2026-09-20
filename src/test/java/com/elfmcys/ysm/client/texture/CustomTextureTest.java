@@ -1,87 +1,92 @@
 package com.elfmcys.ysm.client.texture;
 
-import com.elfmcys.ysm.client.model.ModelResourceFailureGate;
-import com.elfmcys.ysm.format.schema.file.PBRImageSources;
 import com.elfmcys.ysm.natives.image.ImageSource;
+import com.mojang.blaze3d.platform.NativeImage;
+import com.mojang.blaze3d.systems.RenderSystem;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
-import java.util.ArrayDeque;
-import java.util.Optional;
-import java.util.concurrent.Executor;
-import java.util.concurrent.RejectedExecutionException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CustomTextureTest {
     private static final ImageSource UNUSED_SOURCE = () -> {
         throw new IOException("unused");
     };
 
-    @Test
-    void closeAllowsTheSameTextureAndItsPbrComponentsToLoadAgain() {
-        var workers = new QueuedExecutor();
-        var texture = new CustomPBRTextureSet(
-                new PBRImageSources(UNUSED_SOURCE, UNUSED_SOURCE, UNUSED_SOURCE), workers);
-
-        loadAll(texture);
-        assertEquals(3, workers.size());
-
-        texture.close();
-        loadAll(texture);
-        assertEquals(6, workers.size());
+    @BeforeAll
+    static void establishRenderOwner() {
+        if (!RenderSystem.isOnRenderThread()) {
+            RenderSystem.initRenderThread();
+        }
     }
 
     @Test
-    void realFailureRemainsFrozenAcrossClose() {
-        var attempts = new AtomicInteger();
-        var failure = new AtomicReference<Throwable>();
-        Executor rejectingWorkers = ignored -> {
-            attempts.incrementAndGet();
-            throw new RejectedExecutionException("rejected");
-        };
-        var gate = new ModelResourceFailureGate() {
-            @Override
-            public Optional<Throwable> failure() {
-                return Optional.ofNullable(failure.get());
-            }
-
-            @Override
-            public void fail(Throwable cause) {
-                failure.compareAndSet(null, cause);
-            }
-        };
-        var texture = new CustomTexture(UNUSED_SOURCE, rejectingWorkers, gate);
+    void firstLoadAndReloadDecodeUploadSynchronouslyAndClosePixels() {
+        var events = new ArrayList<String>();
+        var images = new ArrayList<NativeImage>();
+        var texture = new CustomTexture(UNUSED_SOURCE, source -> {
+            events.add("decode");
+            var image = new NativeImage(1, 1, false);
+            images.add(image);
+            return image;
+        }, (ignored, image) -> {
+            image.getPixelRGBA(0, 0);
+            events.add("upload");
+        });
 
         texture.load(null);
-        var firstFailure = texture.failure().orElseThrow();
-        texture.close();
+        assertEquals(List.of("decode", "upload"), events);
+        assertClosed(images.get(0));
+
+        texture.load(null);
+        assertEquals(List.of("decode", "upload", "decode", "upload"), events);
+        assertClosed(images.get(1));
+        assertTrue(texture.failure().isEmpty());
+    }
+
+    @Test
+    void decodeFailureIsVisibleBeforeLoadReturnsAndBlocksReload() {
+        var attempts = new AtomicInteger();
+        var failure = new IOException("broken");
+        var texture = new CustomTexture(UNUSED_SOURCE, source -> {
+            attempts.incrementAndGet();
+            throw failure;
+        }, (ignored, image) -> {
+            throw new AssertionError("upload must not run after decode failure");
+        });
+
+        texture.load(null);
         texture.load(null);
 
         assertEquals(1, attempts.get());
-        assertSame(firstFailure, texture.failure().orElseThrow());
-        assertSame(firstFailure, failure.get());
+        assertSame(failure, texture.failure().orElseThrow());
     }
 
-    private static void loadAll(CustomPBRTextureSet texture) {
+    @Test
+    void uploadFailureClosesPixelsAndRemainsVisibleAcrossClose() {
+        var image = new NativeImage(1, 1, false);
+        var failure = new IllegalStateException("upload failed");
+        var texture = new CustomTexture(UNUSED_SOURCE, source -> image,
+                (ignored, pixels) -> {
+                    throw failure;
+                });
+
         texture.load(null);
-        texture.getNormal().load(null);
-        texture.getSpecular().load(null);
+        texture.close();
+
+        assertSame(failure, texture.failure().orElseThrow());
+        assertClosed(image);
     }
 
-    private static final class QueuedExecutor implements Executor {
-        private final ArrayDeque<Runnable> tasks = new ArrayDeque<>();
-
-        @Override
-        public void execute(Runnable command) {
-            tasks.add(command);
-        }
-
-        public int size() {
-            return tasks.size();
-        }
+    private static void assertClosed(NativeImage image) {
+        assertThrows(IllegalStateException.class, () -> image.getPixelRGBA(0, 0));
     }
 }

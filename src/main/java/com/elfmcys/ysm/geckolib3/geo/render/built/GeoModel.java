@@ -1,12 +1,11 @@
 package com.elfmcys.ysm.geckolib3.geo.render.built;
 
 import com.elfmcys.ysm.natives.render.NativeBakedModel;
-import mixel.asset.model.data.GeoModelOuterClass;
+import com.elfmcys.ysm.proto.mixel.asset.model.data.Bone;
 import com.elfmcys.ysm.util.Closeable;
 import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
 import it.unimi.dsi.fastutil.objects.ReferenceList;
 import it.unimi.dsi.fastutil.objects.ReferenceLists;
-
 import java.util.Objects;
 import java.util.function.IntFunction;
 
@@ -17,24 +16,16 @@ public class GeoModel implements Closeable {
     private final ReferenceList<ReferenceArrayList<GeoBone>> locatorMap;
     private final NativeBakedModel bakedModel;
 
-    public GeoModel(String identity, GeoModelOuterClass.GeoModel model,
+    public GeoModel(String identity, com.elfmcys.ysm.proto.mixel.asset.model.data.GeoModel model,
                     GeoLocatorType locatorType,
                     NativeBakedModel.ReadResult bakedModel) {
-        this(identity, boneCount(model), index -> model.getBones().get(index),
-                bakedModel.sortedBoneIndices(), locatorType,
-                bakedModel.bakedModel());
-    }
-
-    public GeoModel(String identity, GeoModelOuterClass.GeoModelIndex model,
-                    GeoLocatorType locatorType,
-                    NativeBakedModel.ReadResult bakedModel) {
-        this(identity, boneCount(model), index -> model.getBones().get(index),
+        this(identity, boneCount(model), index -> model.bones().get(index),
                 bakedModel.sortedBoneIndices(), locatorType,
                 bakedModel.bakedModel());
     }
 
     private GeoModel(String identity, int boneCount,
-                     IntFunction<GeoModelOuterClass.Bone> boneByIndex,
+                     IntFunction<Bone> boneByIndex,
                      short[] sortedBoneIndices, GeoLocatorType locatorType,
                      NativeBakedModel bakedModel) {
         this.identity = identity;
@@ -56,7 +47,7 @@ public class GeoModel implements Closeable {
                 throw new IllegalArgumentException("Invalid sorted bone indices");
             }
             var boneData = boneByIndex.apply(originalIndex);
-            var locator = locatorType.getByBoneName(boneData.getName());
+            var locator = locatorType.getByBoneName(boneData.name());
             var bone = new GeoBone(boneData, locator);
             sortedBones.add(bone);
             if (locator != null) {
@@ -71,12 +62,8 @@ public class GeoModel implements Closeable {
         return identity;
     }
 
-    private static int boneCount(GeoModelOuterClass.GeoModel model) {
-        return model.hasBones() ? model.getBones().length() : 0;
-    }
-
-    private static int boneCount(GeoModelOuterClass.GeoModelIndex model) {
-        return model.hasBones() ? model.getBones().length() : 0;
+    private static int boneCount(com.elfmcys.ysm.proto.mixel.asset.model.data.GeoModel model) {
+        return model.bones().size();
     }
 
     public ReferenceList<GeoBone> sortedBones() {

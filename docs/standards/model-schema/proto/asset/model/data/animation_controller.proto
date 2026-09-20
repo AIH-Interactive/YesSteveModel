@@ -3,7 +3,7 @@ syntax = "proto3";
 
 package mixel.asset.model.data;
 
-import "common/string_pair.proto";
+import "common/program.proto";
 
 message AnimationControllerFile {
   repeated AnimationController controllers = 1;
@@ -11,25 +11,28 @@ message AnimationControllerFile {
 
 message AnimationController {
   string name = 1;
-  string default_state = 2;
+  optional string default_state = 2;
   repeated State states = 3;
 }
 
 message State {
   string name = 1;
-  // name condition
-  repeated mixel.common.StringPair animations = 2;
+  repeated AnimationReference animations = 2;
   repeated Transition transitions = 3;
-  repeated string on_entry = 4;
-  repeated string on_exit = 5;
-  BlendTransition blend_transition = 6;
-  bool blend_via_shortest_path = 7;
+  optional common.Program on_entry = 4;
+  optional common.Program on_exit = 5;
+  optional BlendTransition blend_transition = 6;
   repeated string sound_effects = 8;
 }
 
 message Transition {
   string dst = 1;
-  string condition = 2;
+  common.Program condition = 2;
+}
+
+message AnimationReference {
+  string name = 1;
+  common.Program condition = 2;
 }
 
 message BlendTransition {

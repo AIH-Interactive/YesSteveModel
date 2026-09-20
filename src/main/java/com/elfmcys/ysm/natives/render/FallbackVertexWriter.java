@@ -15,12 +15,12 @@ class FallbackVertexWriter {
     private static final int INDEX_TEX_V = 6;
     private static final int INDEX_LIGHT = 7;
 
-    private static float[] VERTEX_DATA;
+    private static int[] VERTEX_DATA;
 
-    static float[] getVertexData(int vertexCount) {
+    static int[] getVertexData(int vertexCount) {
         var size = vertexCount * STRIDE;
         if (VERTEX_DATA == null || VERTEX_DATA.length < size) {
-            VERTEX_DATA = new float[size];
+            VERTEX_DATA = new int[size];
         }
         return VERTEX_DATA;
     }
@@ -31,29 +31,29 @@ class FallbackVertexWriter {
             for (int i = 0; i < vertexCount; i++) {
                 var offset = i * STRIDE;
 
-                var color = Float.floatToRawIntBits(vertexData[offset + INDEX_COLOR]);
+                var color = vertexData[offset + INDEX_COLOR];
                 var r = (color & 0xFF) / 255f;
                 var g = ((color >>> 8) & 0xFF) / 255f;
                 var b = ((color >>> 16) & 0xFF) / 255f;
                 var a = (color >>> 24) / 255f;
 
-                var normal = Float.floatToRawIntBits(vertexData[offset + INDEX_NORMAL]);
-                var normalX = (byte) ((normal >> 16) & 0xFF) * 127;
-                var normalY = (byte) ((normal >> 8) & 0xFF) * 127;
-                var normalZ = (byte) ((normal & 0xFF)) * 127;
+                var normal = vertexData[offset + INDEX_NORMAL];
+                var normalX = ((byte) ((normal & 0xFF))) / 127f;
+                var normalY = ((byte) ((normal >>> 8) & 0xFF)) / 127f;
+                var normalZ = ((byte) ((normal >>> 16) & 0xFF)) / 127f;
 
                 vertexBuffer.vertex(
-                        vertexData[offset + INDEX_X],
-                        vertexData[offset + INDEX_Y],
-                        vertexData[offset + INDEX_Z],
+                        Float.intBitsToFloat(vertexData[offset + INDEX_X]),
+                        Float.intBitsToFloat(vertexData[offset + INDEX_Y]),
+                        Float.intBitsToFloat(vertexData[offset + INDEX_Z]),
                         r,
                         g,
                         b,
                         a,
-                        vertexData[offset + INDEX_TEX_U],
-                        vertexData[offset + INDEX_TEX_V],
+                        Float.intBitsToFloat(vertexData[offset + INDEX_TEX_U]),
+                        Float.intBitsToFloat(vertexData[offset + INDEX_TEX_V]),
                         overlayUv,
-                        Float.floatToRawIntBits(vertexData[offset + INDEX_LIGHT]),
+                        vertexData[offset + INDEX_LIGHT],
                         normalX,
                         normalY,
                         normalZ);

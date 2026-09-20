@@ -8,8 +8,8 @@ import com.elfmcys.ysm.client.compat.touhoulittlemaid.client.animation.predicate
 import com.elfmcys.ysm.client.compat.touhoulittlemaid.client.input.OpenRouletteScreen;
 import com.elfmcys.ysm.client.compat.touhoulittlemaid.client.render.CustomYsmMaidRenderer;
 import com.elfmcys.ysm.client.entity.CustomHumanoidEntity;
-import com.elfmcys.ysm.client.model.CommonAsset;
-import com.elfmcys.ysm.client.model.PlayerModelResources;
+import com.elfmcys.ysm.model.resource.client.CommonAsset;
+import com.elfmcys.ysm.model.resource.client.PlayerModelResources;
 import com.elfmcys.ysm.geckolib3.core.PlayState;
 import com.elfmcys.ysm.geckolib3.core.event.predicate.AnimationEvent;
 import net.minecraft.world.entity.Entity;
@@ -75,6 +75,12 @@ public class TlmClientCompat {
 
     public static boolean hasMaidCap(Entity entity) {
         return isInstalled() && TlmClientCompatInner.hasMaidCap(entity);
+    }
+
+    public static void releaseAnimatable(Entity entity) {
+        if (isInstalled()) {
+            TlmClientCompatInner.releaseAnimatable(entity);
+        }
     }
 
     public static boolean isChair(Entity entity) {

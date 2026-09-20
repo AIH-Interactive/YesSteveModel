@@ -47,6 +47,13 @@ public class TlmClientCompatInner {
         return false;
     }
 
+    static void releaseAnimatable(Entity entity) {
+        if (entity instanceof EntityMaid maid) {
+            maid.getCapability(YsmMaidCapabilityProvider.CAP)
+                    .ifPresent(capability -> capability.reset());
+        }
+    }
+
     static boolean isChair(Entity entity) {
         return entity instanceof EntityChair;
     }

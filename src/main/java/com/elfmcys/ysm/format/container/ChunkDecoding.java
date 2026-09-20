@@ -2,6 +2,7 @@ package com.elfmcys.ysm.format.container;
 
 import com.elfmcys.ysm.buffer.BufferType;
 import com.elfmcys.ysm.buffer.UniBuffer;
+import com.elfmcys.ysm.format.AssetLoadException;
 import com.elfmcys.ysm.natives.Blake3;
 import com.elfmcys.ysm.natives.Zstd;
 
@@ -20,7 +21,7 @@ public final class ChunkDecoding {
             return Zstd.decompressAndValidate(
                     source, chunk.decodeSize(), chunk.hash(), outputType);
         } catch (RuntimeException error) {
-            throw new IOException(
+            throw AssetLoadException.content(
                     "Failed to decode chunk type=" + chunk.type()
                             + " encoding=" + chunk.encoding()
                             + " encodedSize=" + chunk.size()
@@ -51,14 +52,14 @@ public final class ChunkDecoding {
                                              AssetContainerView.ChunkInfo chunk) throws IOException {
         validateStoredSize(source, chunk);
         if (chunk.hash() != null && !Blake3.validateHash(source, chunk.hash())) {
-            throw new IOException("Incorrect chunk data hash: " + chunk.type());
+            throw AssetLoadException.content("Incorrect chunk data hash: " + chunk.type());
         }
     }
 
     private static void validateStoredSize(UniBuffer source,
                                            AssetContainerView.ChunkInfo chunk) throws IOException {
         if (source.size() != chunk.size()) {
-            throw new IOException("Incorrect stored chunk size: " + chunk.type());
+            throw AssetLoadException.content("Incorrect stored chunk size: " + chunk.type());
         }
     }
 }

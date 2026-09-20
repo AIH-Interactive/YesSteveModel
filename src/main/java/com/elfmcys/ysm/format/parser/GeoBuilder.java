@@ -7,18 +7,21 @@ import com.elfmcys.ysm.format.parser.pojo.model.FaceUv;
 import com.elfmcys.ysm.format.parser.pojo.model.GeoModel;
 import com.elfmcys.ysm.format.parser.pojo.model.GeometryDescription;
 import com.elfmcys.ysm.format.parser.pojo.model.UvFaces;
-import mixel.asset.model.data.GeoModelOuterClass;
-import mixel.manifest.info.ModelStatsOuterClass;
+import com.elfmcys.ysm.proto.mixel.asset.model.data.CubeLegacy;
+import com.elfmcys.ysm.proto.mixel.asset.model.data.Cubes;
+import com.elfmcys.ysm.proto.mixel.asset.model.data.GeoProperties;
+import com.elfmcys.ysm.proto.mixel.manifest.info.ModelStats;
 import com.elfmcys.ysm.util.ProtoUtil;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.objects.Object2IntMaps;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Math;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
-
-import java.io.IOException;
-import java.util.ArrayList;
 
 public class GeoBuilder {
     public static Result build(GeoModel raw) throws IOException {
@@ -26,47 +29,43 @@ public class GeoBuilder {
             throw new IOException("Invalid geo model");
         }
         var geometry = raw.minecraftGeometry.get(0);
-        var model = GeoModelOuterClass.GeoModel.newInstance();
-        var modelData = GeoModelOuterClass.Cubes.newInstance();
+        var model = com.elfmcys.ysm.proto.mixel.asset.model.data.GeoModel.newBuilder();
+        var modelData = Cubes.newBuilder();
         model.setProperties(toProto(geometry.description));
 
         var stats = new Stats();
+        var cubeBuilder = new CubeBuilder();
         stats.bones += geometry.bones.size();
         for (var bone : geometry.bones) {
-            model.addBones(toProto(bone, modelData, geometry.description, stats));
+            model.addBones(toProto(bone, modelData, geometry.description, stats, cubeBuilder));
         }
 
-        var modelDataArray = ProtoUtil.serializeToArray(modelData);
-        model.getMutableCubes().setInternalArray(modelDataArray);
+        var modelDataArray = ProtoUtil.serializeToArray(modelData.build());
+        model.setCubes(ByteBuffer.wrap(modelDataArray));
 
         var desc = geometry.description;
-        return new Result(model, stats,
+        return new Result(model.build(), stats,
                 desc != null ? desc.ysmHeightScale : 0.7f,
                 desc != null ? desc.ysmWidthScale : 0.7f,
                 desc != null ? desc.ysmExtraInfo : null);
     }
 
-    private static GeoModelOuterClass.GeoProperties toProto(GeometryDescription src) {
-        var dst = GeoModelOuterClass.GeoProperties.newInstance();
+    private static GeoProperties toProto(GeometryDescription src) {
+        var dst = GeoProperties.newBuilder();
         if (src == null) {
-            return dst;
+            return dst.build();
         }
-        dst.setIdentifier(src.identifier)
-                .setTextureHeight(src.textureHeight)
-                .setTextureWidth(src.textureWidth)
-                .setVisibleBoundsHeight(src.visibleBoundsHeight)
-                .setVisibleBoundsWidth(src.visibleBoundsWidth);
-        if (src.visibleBoundsOffset != null) {
-            dst.addAllVisibleBoundsOffset(src.visibleBoundsHeight);
-        }
-        return dst;
+        dst.setTextureHeight(src.textureHeight)
+                .setTextureWidth(src.textureWidth);
+        return dst.build();
     }
 
-    private static GeoModelOuterClass.Bone toProto(Bone src,
-                                                   GeoModelOuterClass.Cubes modelData,
+    private static com.elfmcys.ysm.proto.mixel.asset.model.data.Bone toProto(Bone src,
+                                                   Cubes.Builder modelData,
                                                    GeometryDescription properties,
-                                                   Stats stats) {
-        var dst = GeoModelOuterClass.Bone.newInstance()
+                                                   Stats stats,
+                                                   CubeBuilder cubeBuilder) {
+        var dst = com.elfmcys.ysm.proto.mixel.asset.model.data.Bone.newBuilder()
                 .setName(src.name);
         if (src.parent != null) {
             dst.setParent(src.parent);
@@ -80,20 +79,22 @@ public class GeoBuilder {
 
         if (src.cubes != null) {
             for (var cube : src.cubes) {
-                modelData.addCubesLegacy(buildCube(cube, properties, src.inflate / 16f, src.mirror, stats));
+                modelData.addCubesLegacy(buildCube(cube, properties, src.inflate / 16f,
+                        src.mirror, stats, cubeBuilder));
             }
             dst.setCubeCount(src.cubes.size());
         }
-        return dst;
+        return dst.build();
     }
 
-    private static GeoModelOuterClass.CubeLegacy buildCube(Cube cube,
+    private static CubeLegacy buildCube(Cube cube,
                                                            GeometryDescription properties,
                                                            float boneInflate,
                                                            boolean boneMirror,
-                                                           Stats stats) {
-        var dst = GeoModelOuterClass.CubeLegacy.newInstance();
-        var builder = new CubeBuilder(dst);
+                                                           Stats stats,
+                                                           CubeBuilder builder) {
+        var dst = CubeLegacy.newBuilder();
+        builder.clear();
         var sizeIn = arrayOrDefault(cube.size, 1, 1, 1);
         var originIn = arrayOrDefault(cube.origin, 0, 0, 0);
         var inflate = cube.inflate != null ? cube.inflate / 16f : boneInflate;
@@ -127,11 +128,11 @@ public class GeoBuilder {
 
         var rotation = arrayOrDefault(cube.rotation, 0, 0, 0);
         var pivot = arrayOrDefault(cube.pivot, 0, 0, 0);
-        builder.applyTransform(rotation, pivot);
+        builder.applyTransform(rotation, pivot, dst);
         dst.setFaceCount(builder.faceCount);
         stats.cubes++;
         stats.faces += builder.faceCount;
-        return dst;
+        return dst.build();
     }
 
     private static void addPerFaceQuads(CubeBuilder builder, UvFaces faces, boolean cubeMirror, boolean mirroredLayout,
@@ -199,14 +200,14 @@ public class GeoBuilder {
     }
 
     public static final class Result {
-        final GeoModelOuterClass.GeoModel model;
+        final com.elfmcys.ysm.proto.mixel.asset.model.data.GeoModel model;
         final Stats stats;
         final float heightScale;
         final float widthScale;
         @Nullable
         final ExtraInfo legacyInfo;
 
-        private Result(GeoModelOuterClass.GeoModel model, Stats stats, float heightScale, float widthScale, @Nullable ExtraInfo legacyInfo) {
+        private Result(com.elfmcys.ysm.proto.mixel.asset.model.data.GeoModel model, Stats stats, float heightScale, float widthScale, @Nullable ExtraInfo legacyInfo) {
             this.model = model;
             this.stats = stats;
             this.heightScale = heightScale;
@@ -220,11 +221,12 @@ public class GeoBuilder {
         int cubes;
         int faces;
 
-        ModelStatsOuterClass.ModelStats toProto() {
-            return ModelStatsOuterClass.ModelStats.newInstance()
+        ModelStats toProto() {
+            return ModelStats.newBuilder()
                     .setBones(bones)
                     .setCubes(cubes)
-                    .setFaces(faces);
+                    .setFaces(faces)
+                    .build();
         }
     }
 
@@ -252,14 +254,20 @@ public class GeoBuilder {
     }
 
     private static final class CubeBuilder {
-        private final GeoModelOuterClass.CubeLegacy proto;
         private final Object2IntOpenHashMap<Vector3f> positions = new Object2IntOpenHashMap<>();
         private final Object2IntOpenHashMap<Vector2f> uvs = new Object2IntOpenHashMap<>();
         private final ArrayList<Vector3f> normals = new ArrayList<>();
+        private final IntArrayList positionIndices = new IntArrayList();
+        private final IntArrayList uvIndices = new IntArrayList();
         private int faceCount;
 
-        private CubeBuilder(GeoModelOuterClass.CubeLegacy proto) {
-            this.proto = proto;
+        private void clear() {
+            positions.clear();
+            uvs.clear();
+            normals.clear();
+            positionIndices.clear();
+            uvIndices.clear();
+            faceCount = 0;
         }
 
         private void addQuad(Vector3f[] vertices, float u1, float v1, float uSize, float vSize,
@@ -277,49 +285,49 @@ public class GeoBuilder {
             normals.add(direction.createNormal(mirror));
             for (var i = 0; i < 4; i++) {
                 var positionIndex = positions.computeIfAbsent(vertices[i], p -> positions.size());
-                proto.addPosIndices(positionIndex);
+                positionIndices.add(positionIndex);
 
                 var uvIndex = uvs.computeIfAbsent(uv[i], p -> uvs.size());
-                proto.addUvIndices(uvIndex);
+                uvIndices.add(uvIndex);
             }
             faceCount++;
         }
 
-        private void applyTransform(float[] rotation, float[] pivotIn) {
+        private void applyTransform(float[] rotation, float[] pivotIn,
+                                    CubeLegacy.Builder proto) {
             if (positions.isEmpty()) {
                 return;
             }
+            proto.addAllPosIndices(positionIndices);
+            proto.addAllUvIndices(uvIndices);
             var pivot = new Vector3f(-pivotIn[0] / 16f, pivotIn[1] / 16f, pivotIn[2] / 16f);
             var rx = -Math.toRadians(rotation[0]);
             var ry = -Math.toRadians(rotation[1]);
             var rz = Math.toRadians(rotation[2]);
 
-            proto.clearPos();
-            var posArray = proto.getMutablePos();
-            posArray.addLength(positions.size() * 3);
+            var posArray = new float[positions.size() * 3];
             Object2IntMaps.fastForEach(positions, entry -> {
                 var pos = entry.getKey();
                 rotateAround(pos, pivot, rx, ry, rz);
                 var offset = entry.getIntValue() * 3;
-                posArray.set(offset, pos.x);
-                posArray.set(offset + 1, pos.y);
-                posArray.set(offset + 2, pos.z);
+                posArray[offset] = pos.x;
+                posArray[offset + 1] = pos.y;
+                posArray[offset + 2] = pos.z;
             });
+            proto.addPos(posArray);
 
-            proto.clearUv();
-            var uvArray = proto.getMutableUv();
-            uvArray.addLength(uvs.size() * 2);
+            var uvArray = new float[uvs.size() * 2];
             Object2IntMaps.fastForEach(uvs, entry -> {
                 var uv = entry.getKey();
                 var offset = entry.getIntValue() * 2;
-                uvArray.set(offset, uv.x);
-                uvArray.set(offset + 1, uv.y);
+                uvArray[offset] = uv.x;
+                uvArray[offset + 1] = uv.y;
             });
+            proto.addUv(uvArray);
 
-            proto.clearNormal();
             for (Vector3f normal : normals) {
                 rotateVector(normal, rx, ry, rz);
-                proto.addAllNormal(normal.x, normal.y, normal.z);
+                proto.addNormal(normal.x, normal.y, normal.z);
             }
         }
 

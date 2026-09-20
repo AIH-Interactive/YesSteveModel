@@ -2,8 +2,7 @@ package com.elfmcys.ysm.client.event;
 
 import com.elfmcys.ysm.YesSteveModel;
 import com.elfmcys.ysm.capability.PlayerAnimatableCapabilityProvider;
-import com.elfmcys.ysm.client.model.ClientModelService;
-import com.elfmcys.ysm.client.sound.decoder.DecoderManager;
+import com.elfmcys.ysm.model.service.ClientModelService;
 import com.elfmcys.ysm.client.texture.CustomTextureManager;
 import com.elfmcys.ysm.network.forge.ClientProtocolGateway;
 import net.minecraft.client.Minecraft;
@@ -28,7 +27,6 @@ public class ClientTickEvent {
         tickCount++;
         CustomTextureManager.tick();
         ClientModelService.current().ifPresent(ClientModelService::tick);
-        DecoderManager.tick();
         refreshRate = Minecraft.getInstance().getWindow().getRefreshRate();
 
         var player = Minecraft.getInstance().player;

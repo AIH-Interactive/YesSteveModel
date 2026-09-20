@@ -3,7 +3,7 @@ package com.elfmcys.ysm.client.event;
 import com.elfmcys.ysm.YesSteveModel;
 import com.elfmcys.ysm.capability.PlayerAnimatableCapabilityProvider;
 import com.elfmcys.ysm.client.entity.CustomPlayerEntity;
-import com.elfmcys.ysm.client.model.ModelRenderTarget;
+import com.elfmcys.ysm.model.resource.client.ModelRenderTarget;
 import com.elfmcys.ysm.client.renderer.CustomPlayerRenderer;
 import com.elfmcys.ysm.config.ClientConfig;
 import com.elfmcys.ysm.event.api.SpecialPlayerRenderEvent;

@@ -2,30 +2,34 @@ package com.elfmcys.ysm.tool;
 
 import com.elfmcys.ysm.YesSteveModel;
 import com.elfmcys.ysm.format.parser.ModelParser;
+import com.elfmcys.ysm.format.schema.model.ModelFileIdentityReader;
 import com.elfmcys.ysm.format.vfs.Directory;
-import com.elfmcys.ysm.model.catalog.BuiltinModelIndex;
-import com.elfmcys.ysm.model.catalog.BuiltinModelMaterializer;
-import com.elfmcys.ysm.model.catalog.CatalogModelLocation;
-import com.elfmcys.ysm.model.catalog.CatalogRootKind;
-import com.elfmcys.ysm.model.catalog.DefaultAnimationKey;
-import com.elfmcys.ysm.model.catalog.ModelSourceDiscovery;
+import com.elfmcys.ysm.model.catalog.builtin.BuiltinModelIndex;
+import com.elfmcys.ysm.model.catalog.builtin.BuiltinModelMaterializer;
+import com.elfmcys.ysm.model.catalog.content.DefaultAnimationKey;
+import com.elfmcys.ysm.model.catalog.snapshot.CatalogIndexEntry;
+import com.elfmcys.ysm.model.catalog.source.CatalogModelLocation;
+import com.elfmcys.ysm.model.catalog.source.CatalogRootKind;
+import com.elfmcys.ysm.model.catalog.source.ModelSourceDiscovery;
 import com.elfmcys.ysm.model.domain.Hash256;
+import com.elfmcys.ysm.model.domain.ModelFileIdentity;
 import com.elfmcys.ysm.model.domain.ModelPath;
-import com.elfmcys.ysm.model.storage.ModelFileHandle;
+import com.elfmcys.ysm.model.storage.ManagedContainer;
 import com.elfmcys.ysm.model.storage.ModelHashing;
 import com.elfmcys.ysm.natives.NativeRuntime;
-import org.apache.logging.log4j.Level;
-
 import java.io.IOException;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.apache.logging.log4j.Level;
 
 public final class BuiltinModelIndexTool {
     private static final ModelPath DEFAULT_PATH = new ModelPath("default");
@@ -95,10 +99,10 @@ public final class BuiltinModelIndexTool {
             converted = ModelParser.parseBuiltinDefault(vfs, outputDirectory);
         }
         var location = new CatalogModelLocation(CatalogRootKind.BUILTIN, DEFAULT_PATH);
-        var handle = ModelFileHandle.openConverted(converted, location);
-        if (!scanned.equals(handle.descriptor().modelHash())) {
+        var handle = openIndexed(converted, location);
+        if (!scanned.equals(handle.representation().modelId())) {
             throw new IOException("Builtin default full-conversion hash mismatch: dryRun="
-                    + scanned + ", converted=" + handle.descriptor().modelHash());
+                    + scanned + ", converted=" + handle.representation().modelId());
         }
         var materialized = BuiltinModelMaterializer.materialize(handle);
         if (!scanned.equals(materialized.modelHash())) {
@@ -163,8 +167,8 @@ public final class BuiltinModelIndexTool {
                 converted = ModelParser.parse(vfs, outputDirectory, index);
             }
             var location = new CatalogModelLocation(CatalogRootKind.BUILTIN, path);
-            var handle = ModelFileHandle.openConverted(converted, location);
-            var actual = handle.descriptor().modelHash();
+            var handle = openIndexed(converted, location);
+            var actual = handle.representation().modelId();
             if (!expected.equals(actual)) {
                 throw new IOException("Builtin full-conversion hash mismatch at " + path
                         + ": index=" + expected + ", converted=" + actual);
@@ -188,6 +192,16 @@ public final class BuiltinModelIndexTool {
             Hash256 defaultHash, Map<DefaultAnimationKey, Hash256> currentAnimations)
             throws IOException {
         return BuiltinModelIndex.of(Map.of(DEFAULT_PATH, defaultHash), currentAnimations, Map.of());
+    }
+
+    private static ManagedContainer openIndexed(Path file, CatalogModelLocation location)
+            throws IOException {
+        final ModelFileIdentity identity;
+        try (var channel = FileChannel.open(file, StandardOpenOption.READ)) {
+            identity = ModelFileIdentityReader.read(channel);
+        }
+        return ManagedContainer.openIndexed(new CatalogIndexEntry(
+                identity, location, file));
     }
 
     static BuiltinModelIndex createIndex(

@@ -20,7 +20,7 @@ class RawImageCompressorTest {
         assertFalse(RawImageCompressor.LOSSLESS_TEXTURE.supports(Image.Format.WEBP));
 
         assertTrue(RawImageCompressor.MODEL_ICON.supports(Image.Format.PNG));
-        assertTrue(RawImageCompressor.MODEL_ICON.supports(Image.Format.JPEG));
+        assertFalse(RawImageCompressor.MODEL_ICON.supports(Image.Format.JPEG));
         assertFalse(RawImageCompressor.MODEL_ICON.supports(Image.Format.WEBP));
         assertFalse(RawImageCompressor.MODEL_ICON.supports(Image.Format.AVIF));
         assertFalse(RawImageCompressor.MODEL_ICON.supports(Image.Format.ZTX));
@@ -38,7 +38,7 @@ class RawImageCompressorTest {
     }
 
     @Test
-    void keepsOnlySmallerRecompressedImagesAndForwardsLimits() {
+    void replacesPngEvenWhenEncodedRepresentationIsLargerAndForwardsLimits() {
         var codec = new FakeCodec(99);
         var compressor = new RawImageCompressor(codec);
         try (var original = image(Image.Format.PNG, 100);
@@ -48,10 +48,10 @@ class RawImageCompressorTest {
             assertEquals(192, codec.policy.maxHeight());
         }
 
-        codec.encodedSize = 100;
+        codec.encodedSize = 101;
         try (var original = image(Image.Format.PNG, 100);
              var result = compressor.compress(original, RawImageCompressor.MODEL_ICON, "icon.png")) {
-            assertEquals(100, result.data().size());
+            assertEquals(101, result.data().size());
         }
     }
 
@@ -60,8 +60,8 @@ class RawImageCompressorTest {
         var codec = new FakeCodec(10);
         codec.fail = true;
         var compressor = new RawImageCompressor(codec);
-        try (var original = image(Image.Format.JPEG, 100);
-             var result = compressor.compress(original, RawImageCompressor.MODEL_THUMBNAIL, "thumbnail.jpg")) {
+        try (var original = image(Image.Format.PNG, 100);
+             var result = compressor.compress(original, RawImageCompressor.MODEL_THUMBNAIL, "thumbnail.png")) {
             assertEquals(100, result.data().size());
         }
     }

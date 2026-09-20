@@ -1,15 +1,18 @@
 package com.elfmcys.ysm.api.internal.processor;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.elfmcys.ysm.api.internal.processor.asm.ClassWriter;
 import com.elfmcys.ysm.api.internal.processor.asm.ConstantDynamic;
 import com.elfmcys.ysm.api.internal.processor.asm.Handle;
 import com.elfmcys.ysm.api.internal.processor.asm.Opcodes;
 import com.elfmcys.ysm.api.internal.processor.asm.Type;
+import java.lang.invoke.CallSite;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CompatibilityAnalyzerTest {
     @Test
@@ -88,9 +91,9 @@ class CompatibilityAnalyzerTest {
                 "com/elfmcys/ysm/api/Api", "VALUE", "Ljava/lang/String;", false);
         Handle bootstrap = new Handle(Opcodes.H_INVOKESTATIC,
                 "sample/Bootstrap", "bootstrap",
-                Type.getMethodDescriptor(Type.getType(java.lang.invoke.CallSite.class),
-                        Type.getType(java.lang.invoke.MethodHandles.Lookup.class),
-                        Type.getType(String.class), Type.getType(java.lang.invoke.MethodType.class),
+                Type.getMethodDescriptor(Type.getType(CallSite.class),
+                        Type.getType(MethodHandles.Lookup.class),
+                        Type.getType(String.class), Type.getType(MethodType.class),
                         Type.getType(Object.class)),
                 false);
         ConstantDynamic constant = new ConstantDynamic(

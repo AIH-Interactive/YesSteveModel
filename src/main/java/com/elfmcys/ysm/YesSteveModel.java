@@ -4,7 +4,6 @@ import com.elfmcys.ysm.api.internal.event.YsmEventHandlerLoader;
 import com.elfmcys.ysm.config.ClientConfig;
 import com.elfmcys.ysm.config.ServerConfig;
 import com.elfmcys.ysm.init.ModSounds;
-import com.elfmcys.ysm.util.Keep;
 import com.elfmcys.ysm.util.NativeLibUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
@@ -19,7 +18,6 @@ import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.config.ModConfig;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 import net.minecraftforge.fml.loading.FMLEnvironment;
-import net.minecraftforge.fml.loading.FMLPaths;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -63,7 +61,6 @@ public class YesSteveModel {
         return EVENT_BUS.post(event);
     }
 
-    @Keep
     public static boolean isAvailable() {
         return NativeLibUtil.isAvailable();
     }

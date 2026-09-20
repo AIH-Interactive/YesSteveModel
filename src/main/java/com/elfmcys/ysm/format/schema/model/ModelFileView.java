@@ -1,9 +1,12 @@
 package com.elfmcys.ysm.format.schema.model;
 
-import com.elfmcys.ysm.buffer.BufferType;
 import com.elfmcys.ysm.buffer.ArrayBuffer;
+import com.elfmcys.ysm.buffer.BufferType;
+import com.elfmcys.ysm.buffer.UniBuffer;
+import com.elfmcys.ysm.format.container.AssetContainerConstant;
 import com.elfmcys.ysm.format.container.AssetContainerReader;
 import com.elfmcys.ysm.format.container.AssetContainerView;
+import com.elfmcys.ysm.format.container.ChunkDecoding;
 import com.elfmcys.ysm.format.container.InlineChunkReader;
 import com.elfmcys.ysm.format.schema.file.AssetFileView;
 import com.elfmcys.ysm.format.schema.file.ChunkDataSource;
@@ -11,28 +14,24 @@ import com.elfmcys.ysm.format.schema.model.views.CommonAssetView;
 import com.elfmcys.ysm.format.schema.model.views.ModelInfoView;
 import com.elfmcys.ysm.format.schema.model.views.RenderTargetView;
 import com.elfmcys.ysm.model.domain.Hash256;
+import com.elfmcys.ysm.model.domain.ModelFileIdentity;
 import com.elfmcys.ysm.model.domain.RenderTargetIds;
 import com.elfmcys.ysm.natives.image.Image;
 import com.elfmcys.ysm.natives.image.ImageSource;
-import mixel.manifest.ManifestOuterClass;
-import mixel.manifest.asset.RenderTargetOuterClass;
-import mixel.manifest.info.InfoOuterClass;
-import com.elfmcys.ysm.task.TaskContext;
+import com.elfmcys.ysm.proto.mixel.manifest.Manifest;
+import com.elfmcys.ysm.proto.mixel.manifest.asset.RenderTargetKind;
+import com.elfmcys.ysm.proto.mixel.manifest.info.Info;
+import com.elfmcys.ysm.proto.mixel.manifest.info.PreviewSource;
+import com.elfmcys.ysm.util.ProtoBytes;
 import com.elfmcys.ysm.util.ProtoUtil;
-import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
-import org.jetbrains.annotations.Nullable;
-import us.hebi.quickbuf.ProtoSource;
-
 import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.io.UnsupportedEncodingException;
 import java.nio.channels.SeekableByteChannel;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
+import java.util.function.BooleanSupplier;
+import org.jetbrains.annotations.Nullable;
 
 public class ModelFileView {
     private final boolean supported;
@@ -42,60 +41,51 @@ public class ModelFileView {
     private final List<RenderTargetView> renderTargets;
     private final Map<String, RenderTargetView> renderTargetsById;
     private final CommonAssetView commonView;
-    private final ManifestOuterClass.Manifest manifest;
-    private volatile byte[] manifestBytes;
-    private final InfoOuterClass.PreviewSource thumbnailPreviewSource;
+    private final Manifest manifest;
+    private final Hash256 modelId;
+    private final PreviewSource thumbnailPreviewSource;
+    private final PreviewSource iconPreviewSource;
 
     public ModelFileView(SeekableByteChannel file) throws IOException {
-        this(AssetContainerReader.read(file), file);
+        this(ModelFileIdentityReader.readContainer(file),
+                ModelFileIdentityReader.classifyAccess(file));
     }
 
     private ModelFileView(AssetContainerView assetView, SeekableByteChannel file) throws IOException {
-        this(assetView, readManifest(assetView, file));
+        this(assetView, ModelFileIdentityReader.read(assetView), readManifest(assetView, file));
     }
 
-    private ModelFileView(AssetContainerView assetView, ManifestData manifestData) throws IOException {
-        if (!ModelFileConstant.SCHEMA_ID.equals(assetView.getSchema())) {
-            throw new IOException("Schema ID mismatch: " + assetView.getSchema());
-        }
-
-        var vendor = Objects.requireNonNull(assetView.getSchemaProperty(
-                ModelFileConstant.PROP_VENDOR), "Vendor property not found");
-        var version = new DefaultArtifactVersion(Objects.requireNonNull(assetView.getSchemaProperty(
-                ModelFileConstant.PROP_VERSION), "Version property not found"));
-        if (!version.equals(ModelFileConstant.CURRENT_VERSION)) {
-            throw new UnsupportedEncodingException(String.format("Unsupported model version: \"%s\". Exported by \"%s\"",
-                    version, vendor));
-        }
+    private ModelFileView(AssetContainerView assetView,
+                          ModelFileIdentity identity,
+                          ManifestData manifestData) throws IOException {
         supported = true;
 
-        if (!assetView.isAcceptedVersion()) {
-            throw new UnsupportedEncodingException(String.format("Unsupported asset container version: \"%s\". Exported by \"%s\"",
-                    version, vendor));
-        }
-
         this.manifest = manifestData.manifest();
-        this.manifestBytes = manifestData.bytes();
-        this.thumbnailPreviewSource = thumbnailSource(manifest.getInfo());
+        this.modelId = manifestModelId(manifest);
+        if (!modelId.equals(identity.modelId())) {
+            throw new IOException("Manifest model identity does not match container property");
+        }
+        this.thumbnailPreviewSource = thumbnailSource(manifest.info());
+        this.iconPreviewSource = iconSource(manifest.info());
 
         this.fileView = new AssetFileView(assetView);
-        metadataView = new ModelInfoView(manifest.getInfo(), this.fileView);
-        commonView = new CommonAssetView(manifest.getCommonBehavior(), this.fileView);
-        validateThumbnailSource(thumbnailPreviewSource,
+        commonView = new CommonAssetView(manifest.commonAssets(), this.fileView);
+        validatePreviewSource("Thumbnail", thumbnailPreviewSource,
                 assetView.getChunkInfo(ModelFileConstant.THUMB_BUTTON_CHUNK_NAME) != null);
+        validatePreviewSource("Icon", iconPreviewSource,
+                assetView.getChunkInfo(ModelFileConstant.THUMB_ICON_CHUNK_NAME) != null);
         validatePlayerRenderTarget(manifest);
-        var targets = new ArrayList<RenderTargetView>(manifest.getRenderTargets().length());
+        metadataView = new ModelInfoView(manifest.info(),
+                ModelManifestLookup.target(manifest, RenderTargetIds.PLAYER), this.fileView);
+        var targets = new ArrayList<RenderTargetView>(manifest.renderTargets().size());
         var byId = new LinkedHashMap<String, RenderTargetView>();
-        for (var target : manifest.getRenderTargets()) {
+        for (var target : manifest.renderTargets()) {
             var view = new RenderTargetView(this.fileView, target);
             if (view.id().isBlank() || byId.putIfAbsent(view.id(), view) != null) {
                 throw new IOException("Duplicate or empty render target id: " + view.id());
             }
-            if (view.kind() == RenderTargetOuterClass.RenderTargetKind.RENDER_TARGET_KIND_UNSPECIFIED) {
+            if (view.kind() == RenderTargetKind.RENDER_TARGET_KIND_UNSPECIFIED) {
                 throw new IOException("Render target has no kind: " + view.id());
-            }
-            if (view.getTextureNames().isEmpty()) {
-                throw new IOException("Render target has no textures: " + view.id());
             }
             targets.add(view);
         }
@@ -103,22 +93,31 @@ public class ModelFileView {
         renderTargetsById = Map.copyOf(byId);
     }
 
-    static void validatePlayerRenderTarget(ManifestOuterClass.Manifest manifest) throws IOException {
-        if (!manifest.hasRenderTargets()) {
+    static void validatePlayerRenderTarget(Manifest manifest) throws IOException {
+        if (manifest.renderTargets().isEmpty()) {
             throw new IOException("Model contains no player render target");
         }
         var found = false;
-        for (var target : manifest.getRenderTargets()) {
-            var targetId = target.hasTargetId() ? target.getTargetId() : "";
-            var kind = target.hasKind()
-                    ? target.getKind()
-                    : RenderTargetOuterClass.RenderTargetKind.RENDER_TARGET_KIND_UNSPECIFIED;
+        for (var target : manifest.renderTargets()) {
+            var targetId = target.targetId();
+            var kind = target.kind();
+            if (!target.textures().isEmpty()) {
+                for (var texture : target.textures().object2ObjectEntrySet()) {
+                    if (texture.getKey().isEmpty()) {
+                        throw new IOException("Render target has an empty texture key: "
+                                + targetId);
+                    }
+                }
+            }
             if (targetId.equals(RenderTargetIds.PLAYER)) {
-                if (kind != RenderTargetOuterClass.RenderTargetKind.RENDER_TARGET_KIND_PLAYER) {
+                if (kind != RenderTargetKind.RENDER_TARGET_KIND_PLAYER) {
                     throw new IOException("Player render target has invalid kind: " + kind);
                 }
+                if (target.textures().isEmpty()) {
+                    throw new IOException("Player render target has no texture");
+                }
                 found = true;
-            } else if (kind == RenderTargetOuterClass.RenderTargetKind.RENDER_TARGET_KIND_PLAYER) {
+            } else if (kind == RenderTargetKind.RENDER_TARGET_KIND_PLAYER) {
                 throw new IOException("Player render target has invalid id: " + targetId);
             }
         }
@@ -127,40 +126,51 @@ public class ModelFileView {
         }
     }
 
-    static void validateThumbnailSource(InfoOuterClass.PreviewSource source, boolean hasThumbnail) throws IOException {
+    static void validatePreviewSource(String name,
+                                      PreviewSource source,
+                                      boolean hasImage) throws IOException {
         if (source == null) {
-            throw new IOException("Thumbnail has an unknown preview source");
+            throw new IOException(name + " has an unknown preview source");
         }
-        if (source == InfoOuterClass.PreviewSource.PREVIEW_SOURCE_UNSPECIFIED) {
-            if (hasThumbnail) {
-                throw new IOException("Thumbnail chunk has no preview source");
+        if (source == PreviewSource.PREVIEW_SOURCE_UNSPECIFIED) {
+            if (hasImage) {
+                throw new IOException(name + " chunk has no preview source");
             }
-        } else if (!hasThumbnail) {
-            throw new IOException("Thumbnail preview source has no thumbnail chunk: " + source);
+        } else if (!hasImage) {
+            throw new IOException(name + " preview source has no image chunk: " + source);
         }
     }
 
-    static InfoOuterClass.PreviewSource thumbnailSource(InfoOuterClass.Info info) {
-        return info.hasThumbnailSource()
-                ? info.getThumbnailSource()
-                : InfoOuterClass.PreviewSource.PREVIEW_SOURCE_UNSPECIFIED;
+    static PreviewSource thumbnailSource(Info info) {
+        return info.thumbnailSource().orElse(
+                PreviewSource.PREVIEW_SOURCE_UNSPECIFIED);
     }
 
-    public static ModelFileView readMetadata(byte[] containerPreamble, byte[] manifestBytes) {
-        try {
-            var assetView = AssetContainerReader.readPreamble(containerPreamble);
-            var manifest = ManifestOuterClass.Manifest.parseFrom(ProtoSource.newInstance(manifestBytes));
-            return new ModelFileView(assetView, new ManifestData(manifest, manifestBytes));
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
+    static PreviewSource iconSource(Info info) {
+        return info.iconSource().orElse(
+                PreviewSource.PREVIEW_SOURCE_UNSPECIFIED);
+    }
+
+    public static ModelFileView readMetadata(UniBuffer metadataPrefix) throws IOException {
+        try (var bytes = metadataPrefix.acquireArray()) {
+            var assetView = AssetContainerReader.readPreamble(
+                    bytes.array(), bytes.arrayOffset(), bytes.size());
+            var manifestChunk = requireMetadataLayout(assetView);
+            var prefixSize = Math.addExact(manifestChunk.offset(), manifestChunk.size());
+            if (bytes.size() != prefixSize) {
+                throw new IOException("Metadata prefix has an invalid byte range");
+            }
+            var stored = ArrayBuffer.borrow(bytes.array(),
+                    bytes.arrayOffset() + manifestChunk.offset(), manifestChunk.size());
+            ChunkDecoding.validateDirectPayload(stored, manifestChunk);
+            var manifest = Manifest.parseFrom(ProtoUtil.source(stored));
+            return new ModelFileView(assetView, ModelFileIdentityReader.read(assetView),
+                    new ManifestData(manifest));
         }
     }
 
     private static ManifestData readManifest(AssetContainerView assetView, SeekableByteChannel file) throws IOException {
-        var chunk = assetView.getChunkInfo(ModelFileConstant.MANIFEST_CHUNK_NAME);
-        if (chunk == null) {
-            throw new IOException("No manifest data found");
-        }
+        var chunk = requireMetadataLayout(assetView);
         try (var data = InlineChunkReader.readPayload(file, chunk, BufferType.ARRAY)) {
             if (data.size() == 0) {
                 throw new IOException("No manifest data found");
@@ -168,11 +178,35 @@ public class ModelFileView {
             if (!(data instanceof ArrayBuffer arrayBuffer)) {
                 throw new IOException("Model manifest is not array-backed");
             }
-            var manifest = ManifestOuterClass.Manifest.parseFrom(ProtoUtil.source(arrayBuffer));
-            var bytes = new byte[arrayBuffer.size()];
-            System.arraycopy(arrayBuffer.array(), arrayBuffer.arrayOffset(), bytes, 0, bytes.length);
-            return new ManifestData(manifest, bytes);
+            var manifest = Manifest.parseFrom(ProtoUtil.source(arrayBuffer));
+            return new ManifestData(manifest);
         }
+    }
+
+    public static AssetContainerView.ChunkInfo requireMetadataLayout(
+            AssetContainerView assetView) throws IOException {
+        var manifest = assetView.getChunkInfo(ModelFileConstant.MANIFEST_CHUNK_NAME);
+        if (manifest == null || manifest.size() <= 0) {
+            throw new IOException("No manifest data found");
+        }
+        if (!manifest.encoding().isEmpty() || manifest.decodeSize() != 0) {
+            throw new IOException("Manifest must use direct storage");
+        }
+        var verification = assetView.getChunkInfo(
+                AssetContainerConstant.VERIFICATION_CHUNK_TYPE);
+        if (verification == null
+                || manifest.offset() != Math.addExact(
+                Math.addExact(verification.offset(), verification.size()), manifest.alignSize())) {
+            throw new IOException("Manifest must be the first ordinary chunk");
+        }
+        for (var chunk : assetView.getChunkTable().values()) {
+            if (!chunk.type().equals(AssetContainerConstant.VERIFICATION_CHUNK_TYPE)
+                    && !chunk.type().equals(ModelFileConstant.MANIFEST_CHUNK_NAME)
+                    && chunk.offset() < manifest.offset()) {
+                throw new IOException("Manifest must be the first ordinary chunk");
+            }
+        }
+        return manifest;
     }
 
     public boolean supported() {
@@ -183,24 +217,44 @@ public class ModelFileView {
         return fileView;
     }
 
-    public CompletableFuture<@Nullable Image> readThumbnail(TaskContext ctx, ChunkDataSource source) {
-        return fileView.readImageChunk(ctx, source, ModelFileConstant.THUMB_BUTTON_CHUNK_NAME);
+    public @Nullable Image readThumbnail(BooleanSupplier cancelled, ChunkDataSource source)
+            throws IOException {
+        return fileView.readImageChunk(
+                cancelled, source, ModelFileConstant.THUMB_BUTTON_CHUNK_NAME);
     }
 
     public @Nullable ImageSource thumbnailSource(ChunkDataSource source) throws IOException {
         return fileView.imageChunkSource(source, ModelFileConstant.THUMB_BUTTON_CHUNK_NAME);
     }
 
-    public InfoOuterClass.PreviewSource getThumbnailPreviewSource() {
+    public @Nullable ImageSource thumbnailSource(BooleanSupplier cancelled, ChunkDataSource source)
+            throws IOException {
+        return fileView.imageChunkSource(
+                cancelled, source, ModelFileConstant.THUMB_BUTTON_CHUNK_NAME);
+    }
+
+    public PreviewSource getThumbnailPreviewSource() {
         return thumbnailPreviewSource;
     }
 
-    public CompletableFuture<@Nullable Image> readIcon(TaskContext ctx, ChunkDataSource source) {
-        return fileView.readImageChunk(ctx, source, ModelFileConstant.THUMB_ICON_CHUNK_NAME);
+    public PreviewSource getIconPreviewSource() {
+        return iconPreviewSource;
+    }
+
+    public @Nullable Image readIcon(BooleanSupplier cancelled, ChunkDataSource source)
+            throws IOException {
+        return fileView.readImageChunk(
+                cancelled, source, ModelFileConstant.THUMB_ICON_CHUNK_NAME);
     }
 
     public @Nullable ImageSource iconSource(ChunkDataSource source) throws IOException {
         return fileView.imageChunkSource(source, ModelFileConstant.THUMB_ICON_CHUNK_NAME);
+    }
+
+    public @Nullable ImageSource iconSource(BooleanSupplier cancelled, ChunkDataSource source)
+            throws IOException {
+        return fileView.imageChunkSource(
+                cancelled, source, ModelFileConstant.THUMB_ICON_CHUNK_NAME);
     }
 
     public ModelInfoView getMetadata() {
@@ -231,28 +285,22 @@ public class ModelFileView {
         return commonView;
     }
 
-    public ManifestOuterClass.Manifest getManifest() {
+    public Manifest getManifest() {
         return manifest;
     }
 
-    public byte[] getManifestBytes() {
-        return manifestBytes.clone();
-    }
-
-    /** Drops the encoded manifest after intrinsic assets have been fully materialized. */
-    public void discardManifestBytes() {
-        manifestBytes = new byte[0];
-    }
-
     public Hash256 getModelHash() throws IOException {
-        var properties = manifest.getInfo().getProperties();
-        if (!properties.hasHashId() || properties.getHashId().length() != Hash256.SIZE) {
+        return modelId;
+    }
+
+    private static Hash256 manifestModelId(Manifest manifest) throws IOException {
+        var properties = manifest.info().properties();
+        if (properties.modelId().remaining() != Hash256.SIZE) {
             throw new IOException("Manifest contains no valid full model hash");
         }
-        var hash = properties.getHashId();
-        return new Hash256(hash.array(), 0, hash.length());
+        return new Hash256(ProtoBytes.copy(properties.modelId()));
     }
 
-    private record ManifestData(ManifestOuterClass.Manifest manifest, byte[] bytes) {
+    private record ManifestData(Manifest manifest) {
     }
 }

@@ -4,7 +4,8 @@ import com.elfmcys.ysm.client.animation.molang.PhysicsManager;
 import com.elfmcys.ysm.client.entity.CustomPlayerEntity;
 import com.elfmcys.ysm.client.entity.IPreviewEntity;
 import com.elfmcys.ysm.client.event.ClientTickEvent;
-import com.elfmcys.ysm.client.model.ModelRenderTargetLease;
+import com.elfmcys.ysm.model.resource.client.ResourceLease;
+import com.elfmcys.ysm.model.resource.client.ResourceRequest;
 import com.elfmcys.ysm.geckolib3.core.event.predicate.AnimationEvent;
 import com.elfmcys.ysm.geckolib3.core.molang.context.DebugSource;
 import com.elfmcys.ysm.geckolib3.geo.GeoRenderData;
@@ -24,6 +25,10 @@ public final class CustomGuiPlayerEntity extends CustomPlayerEntity implements I
     public CustomGuiPlayerEntity() {
         super(new FakePlayer(), false, false);
         guiAnimationInfo = new PreviewAnimationInfo();
+    }
+
+    void installPreviewResource(ResourceRequest request, ResourceLease lease) {
+        super.installReadyForPreview(request, lease);
     }
 
     @Override
@@ -93,8 +98,8 @@ public final class CustomGuiPlayerEntity extends CustomPlayerEntity implements I
     }
 
     @Override
-    protected @NotNull HumanoidResourceHolder createResourceHolder(ModelRenderTargetLease lease, boolean isFallback) {
-        return new HumanoidResourceHolder(lease, isFallback, false, true, 15 * 20);
+    protected @NotNull HumanoidResourceHolder createResourceHolder(ResourceLease lease, boolean isFallback) {
+        return new HumanoidResourceHolder(lease, isFallback);
     }
 
     private static class FakePlayer extends AbstractClientPlayer {

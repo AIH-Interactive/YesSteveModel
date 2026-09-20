@@ -14,6 +14,7 @@ class PublicUnstableVersionTest {
     @Test
     void allPublicFormatsUseTheExactUnstableVersion() {
         var expected = "0.1.0-unstable";
+        var bakedModelExpected = "0.2.0-unstable";
         assertAll(
                 () -> assertEquals(expected, AssetContainerConstant.CURRENT_VERSION),
                 () -> assertEquals(0, AssetContainerConstant.CURRENT_MAJOR_VER),
@@ -21,10 +22,10 @@ class PublicUnstableVersionTest {
                 () -> assertEquals(0, AssetContainerConstant.CURRENT_PATCH_VER),
                 () -> assertEquals("unstable", AssetContainerConstant.CURRENT_QUALIFIER_VER),
                 () -> assertEquals(expected, ModelFileConstant.CURRENT_VERSION.toString()),
-                () -> assertEquals(expected, BakedModelConstant.CURRENT_VERSION.toString()),
+                () -> assertEquals(bakedModelExpected, BakedModelConstant.CURRENT_VERSION.toString()),
                 () -> assertEquals(expected, BakedAssetConstant.CURRENT_VERSION.toString()),
-                () -> assertEquals(expected, ProtocolVersion.CURRENT),
-                () -> assertEquals(expected, ProtocolVersion.TRANSPORT_VERSION)
+                () -> assertEquals("0.3.0-unstable", ProtocolVersion.CURRENT),
+                () -> assertEquals("0.3.0-unstable", ProtocolVersion.TRANSPORT_VERSION)
         );
     }
 }

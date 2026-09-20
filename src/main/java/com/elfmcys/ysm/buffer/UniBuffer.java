@@ -16,11 +16,13 @@ public interface UniBuffer extends AutoCloseable {
     // 不应该暴露
     // boolean owning();
 
-    // 注意不自增引用计数
+    /** Non-owning alias that shares the source ownership token; never close it separately. */
     UniBuffer slice(int offset, int size);
 
+    /** Non-owning view; callers must not close it. */
     UniBuffer borrow();
 
+    /** Independent owning reference; close only when its terminal owner is fixed. */
     UniBuffer acquire();
 
     UniBuffer copy();

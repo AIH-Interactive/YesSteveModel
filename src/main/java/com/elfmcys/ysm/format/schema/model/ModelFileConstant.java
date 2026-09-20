@@ -10,6 +10,7 @@ public final class ModelFileConstant {
     public static final DefaultArtifactVersion CURRENT_VERSION = new DefaultArtifactVersion("0.1.0-unstable");
     public static final short PROP_VERSION = 0;
     public static final short PROP_VENDOR = 1;
+    public static final short PROP_MODEL_ID = 2;
 
     private ModelFileConstant() {
     }

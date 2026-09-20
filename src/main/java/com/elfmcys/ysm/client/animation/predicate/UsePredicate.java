@@ -5,14 +5,13 @@ import com.elfmcys.ysm.client.animation.condition.ConditionalUse;
 import com.elfmcys.ysm.client.entity.CustomHumanoidEntity;
 import com.elfmcys.ysm.client.entity.IPreviewEntity;
 import com.elfmcys.ysm.geckolib3.core.PlayState;
-import com.elfmcys.ysm.geckolib3.core.builder.LoopType;
 import com.elfmcys.ysm.geckolib3.core.event.predicate.AnimationEvent;
 import com.elfmcys.ysm.molang.runtime.ExpressionEvaluator;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
 import org.apache.commons.lang3.StringUtils;
 
-import static com.elfmcys.ysm.client.animation.predicate.IAnimationPredicate.playCompatAnimation;
+import static com.elfmcys.ysm.client.animation.predicate.IAnimationPredicate.playAnimation;
 
 public class UsePredicate implements IAnimationPredicate<CustomHumanoidEntity<?>> {
     @Override
@@ -21,8 +20,6 @@ public class UsePredicate implements IAnimationPredicate<CustomHumanoidEntity<?>
         if (entity == null || event.getAnimatableEntity() instanceof IPreviewEntity) {
             return PlayState.STOP;
         }
-
-        int formatVer = event.getAnimatableEntity().getModelRenderTarget().info().formatVer();
 
         if (entity.isUsingItem() && !entity.isSleeping()) {
             if (entity.getTicksUsingItem() == 1 && event.getAnimatableEntity().getStateTracker().setEntityTickState(EntityTickStates.USING_ITEM)) {
@@ -34,19 +31,19 @@ public class UsePredicate implements IAnimationPredicate<CustomHumanoidEntity<?>
                 if (conditionalUse != null) {
                     String name = conditionalUse.doTest(entity, InteractionHand.MAIN_HAND);
                     if (StringUtils.isNoneBlank(name)) {
-                        return playCompatAnimation(event, name, LoopType.LOOP, formatVer);
+                        return playAnimation(event, name);
                     }
                 }
-                return playCompatAnimation(event, "use_mainhand", LoopType.LOOP, formatVer);
+                return playAnimation(event, "use_mainhand");
             } else {
                 ConditionalUse conditionalUse = conditionManager.getUseOffhand();
                 if (conditionalUse != null) {
                     String name = conditionalUse.doTest(entity, InteractionHand.OFF_HAND);
                     if (StringUtils.isNoneBlank(name)) {
-                        return playCompatAnimation(event, name, LoopType.LOOP, formatVer);
+                        return playAnimation(event, name);
                     }
                 }
-                return playCompatAnimation(event, "use_offhand", LoopType.LOOP, formatVer);
+                return playAnimation(event, "use_offhand");
             }
         }
         return PlayState.STOP;

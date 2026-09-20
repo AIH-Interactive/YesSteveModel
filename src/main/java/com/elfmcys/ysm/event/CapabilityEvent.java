@@ -15,12 +15,15 @@ import com.elfmcys.ysm.capability.StarModelsCapabilityProvider;
 import com.elfmcys.ysm.capability.VehicleAnimatableCapabilityProvider;
 import com.elfmcys.ysm.capability.VehicleModelInfoCapabilityProvider;
 import com.elfmcys.ysm.config.ServerConfig;
-import com.elfmcys.ysm.model.server.ServerModelService;
+import com.elfmcys.ysm.model.ModelRuntime;
+import com.elfmcys.ysm.model.service.ServerModelService;
 import com.elfmcys.ysm.network.NetworkHandler;
-import com.elfmcys.ysm.network.forge.HandshakeHandler;
 import com.elfmcys.ysm.network.forge.MinecraftStateHandler;
-import com.elfmcys.ysm.proto.network.protocol.v0.PlayerStateV0;
-import com.elfmcys.ysm.network.forge.ControlHandler;
+import com.elfmcys.ysm.network.forge.PlayerStateHandler;
+import com.elfmcys.ysm.network.forge.SessionProtocolHandler;
+import com.elfmcys.ysm.network.protocol.StarredModelSnapshots;
+import com.elfmcys.ysm.proto.network.PlayerStateUpdate;
+import java.util.Optional;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
@@ -36,8 +39,6 @@ import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.loading.FMLEnvironment;
-
-import java.util.Optional;
 
 @Mod.EventBusSubscriber
 @SuppressWarnings("removal")
@@ -137,9 +138,9 @@ public final class CapabilityEvent {
                 if (!NetworkHandler.isPlayerChannelPresent(trackPlayer) && !cap.isMandatory()) {
                     return;
                 }
-                buildModelInfoPacket(trackPlayer, cap).ifPresentOrElse(packet -> {
-                    NetworkHandler.sendToClientPlayer(packet, player);
-                }, cap::markDirty);
+                buildModelInfoPacket(trackPlayer, cap).ifPresent(packet -> {
+                    PlayerStateHandler.sendToObserver(packet, player);
+                });
             });
         } else if (event.getTarget() instanceof Projectile projectile) {
             projectile.getCapability(ProjectileModelInfoCapabilityProvider.CAP).ifPresent(cap -> {
@@ -166,21 +167,19 @@ public final class CapabilityEvent {
         if (event.getEntity() instanceof ServerPlayer serverPlayer) {
             getModelInfoCap(serverPlayer).ifPresent(modelInfoCap -> {
                 if (!NetworkHandler.isPlayerChannelPresent(serverPlayer) && !modelInfoCap.isMandatory()) {
-                    modelInfoCap.markDirty();
+                    modelInfoCap.consumeDirty();
                     return;
                 }
                 modelInfoCap.stopAnimation(serverPlayer);
-                buildModelInfoPacket(serverPlayer, modelInfoCap).ifPresentOrElse(packet -> {
-                    NetworkHandler.sendToClientPlayer(packet, serverPlayer);
-                }, modelInfoCap::markDirty);
+                modelInfoCap.consumeDirty();
             });
 
-            getAuthModelsCap(serverPlayer).ifPresent(authModelsCap -> {
-                NetworkHandler.sendToClientPlayer(ControlHandler.authorizedModels(authModelsCap.getAuthModels(), 1), serverPlayer);
-            });
+            getAuthModelsCap(serverPlayer).ifPresent(authModelsCap ->
+                    SessionProtocolHandler.refreshGrants(serverPlayer));
 
             getStarModelsCap(serverPlayer).ifPresent(starModelCap -> {
-                NetworkHandler.sendToClientPlayer(ControlHandler.starredModels(starModelCap.getStarModels(), 1), serverPlayer);
+                NetworkHandler.sendToClientPlayer(
+                        StarredModelSnapshots.create(starModelCap.getStarModels()), serverPlayer);
             });
         }
     }
@@ -199,16 +198,13 @@ public final class CapabilityEvent {
             for (ServerPlayer player : players) {
                 getModelInfoCap(player).ifPresent(cap -> {
                     if (!NetworkHandler.isPlayerChannelPresent(player) && !cap.isMandatory()) {
-                        if (player.tickCount == 200 || player.tickCount == 600 || player.tickCount == 1800) {
-                            HandshakeHandler.sendServerHello(player);
-                        }
+                        cap.consumeDirty();
                         return;
                     }
-                    if (cap.isDirty()) {
+                    if (cap.consumeDirty()) {
                         cap.getPropertiesTracker().tick(player, false, lowBandwidthUsage);
                         buildModelInfoPacket(player, cap).ifPresent(packet -> {
-                            cap.clearDirty();
-                            NetworkHandler.broadcastToVisiblePlayersAndSelf(packet, player);
+                            PlayerStateHandler.broadcast(player, packet);
                             if (player.getVehicle() != null && player.getVehicle().getFirstPassenger() == player) {
                                 CapabilityEvent.onVehicleSetModel(player.getVehicle(), player);
                             }
@@ -218,6 +214,15 @@ public final class CapabilityEvent {
                     }
                 });
             }
+            ServerModelService.current().ifPresent(service -> {
+                if (FMLEnvironment.dist
+                        == Dist.DEDICATED_SERVER) {
+                    var system = ModelRuntime.system();
+                    system.tickCatalog();
+                    system.tickServerRuntime();
+                }
+                service.tick();
+            });
         }
     }
 
@@ -256,9 +261,9 @@ public final class CapabilityEvent {
         return player.getCapability(ModelInfoCapabilityProvider.MODEL_INFO_CAP);
     }
 
-    private static Optional<PlayerStateV0.PlayerStateUpdate> buildModelInfoPacket(
+    private static Optional<PlayerStateUpdate> buildModelInfoPacket(
             ServerPlayer player, ModelInfoCapability capability) {
-        return ServerModelService.current().flatMap(ServerModelService::snapshot)
+        return ServerModelService.current().flatMap(ServerModelService::catalog)
                 .flatMap(snapshot -> ModelInfoSyncAssembler.build(
                         player, capability, snapshot));
     }

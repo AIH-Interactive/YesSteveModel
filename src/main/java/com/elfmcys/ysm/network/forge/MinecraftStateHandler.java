@@ -6,86 +6,90 @@ import com.elfmcys.ysm.capability.VehicleModelInfoCapability;
 import com.elfmcys.ysm.client.event.EntityLoadEvent;
 import com.elfmcys.ysm.geckolib3.core.molang.util.StringPool;
 import com.elfmcys.ysm.model.domain.Hash256;
-import com.elfmcys.ysm.proto.network.protocol.v0.minecraft.MinecraftStateV0;
-import com.elfmcys.ysm.proto.network.protocol.v0.CommonV0;
 import com.elfmcys.ysm.network.protocol.ModelReferenceCodec;
+import com.elfmcys.ysm.proto.network.EntityRef;
+import com.elfmcys.ysm.proto.network.MolangVariable;
+import com.elfmcys.ysm.proto.network.ProjectileModelState;
+import com.elfmcys.ysm.proto.network.VehicleModelState;
 import it.unimi.dsi.fastutil.ints.Int2FloatOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Object2FloatOpenHashMap;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 import net.minecraft.world.entity.Entity;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.api.distmarker.OnlyIn;
 import net.minecraftforge.network.NetworkEvent;
 
-import java.util.function.Supplier;
-
 public final class MinecraftStateHandler {
     private MinecraftStateHandler() {
     }
 
-    public static MinecraftStateV0.ProjectileModelState projectile(
+    public static ProjectileModelState projectile(
             int entityId, ProjectileModelInfoCapability capability) {
-        var message = MinecraftStateV0.ProjectileModelState.newInstance()
-                .setEntity(CommonV0.EntityRef.newInstance().setEntityId(entityId));
-        setState(message.getMutableModel(), message::addMolangVariables,
-                capability.getOwnerModelHash(), capability.getMolangVarsServerBound());
-        return message;
+        var message = ProjectileModelState.newBuilder()
+                .setEntity(EntityRef.newBuilder()
+                        .setEntityId(entityId).build())
+                .setModel(ModelReferenceCodec.create(capability.getOwnerModelHash(), null));
+        addVariables(message::addMolangVariables, capability.getMolangVarsServerBound());
+        return message.build();
     }
 
-    public static MinecraftStateV0.VehicleModelState vehicle(
+    public static VehicleModelState vehicle(
             int entityId, VehicleModelInfoCapability capability) {
-        var message = MinecraftStateV0.VehicleModelState.newInstance()
-                .setEntity(CommonV0.EntityRef.newInstance().setEntityId(entityId));
-        setState(message.getMutableModel(), message::addMolangVariables,
-                capability.getOwnerModelHash(), capability.getMolangVarsServerBound());
-        return message;
+        var message = VehicleModelState.newBuilder()
+                .setEntity(EntityRef.newBuilder()
+                        .setEntityId(entityId).build())
+                .setModel(ModelReferenceCodec.create(capability.getOwnerModelHash(), null));
+        addVariables(message::addMolangVariables, capability.getMolangVarsServerBound());
+        return message.build();
     }
 
-    public static void handleProjectile(MinecraftStateV0.ProjectileModelState message,
+    public static void handleProjectile(ProjectileModelState message,
                                         Supplier<NetworkEvent.Context> contextSupplier) {
         var context = contextSupplier.get();
-        if (!message.hasEntity() || !message.hasModel()
-                || !ModelReferenceCodec.valid(message.getModel())) {
+        if (!ModelReferenceCodec.valid(message.model())) {
             context.setPacketHandled(true);
             return;
         }
-        var modelHash = ModelReferenceCodec.read(message.getModel());
-        var variables = clientVariables(message.getMolangVariables());
-        context.enqueueWork(() -> EntityLoadEvent.executeOnEntity(message.getEntity().getEntityId(),
-                entity -> applyProjectile(entity, modelHash, variables)));
+        var modelHash = ModelReferenceCodec.read(message.model());
+        var variables = clientVariables(message.molangVariables());
+        var connection = context.getNetworkManager();
+        context.enqueueWork(() -> ClientSessionRuntime.runIfCurrent(connection,
+                () -> EntityLoadEvent.executeOnEntity(message.entity().entityId(),
+                        entity -> applyProjectile(entity, modelHash, variables))));
         context.setPacketHandled(true);
     }
 
-    public static void handleVehicle(MinecraftStateV0.VehicleModelState message,
+    public static void handleVehicle(VehicleModelState message,
                                      Supplier<NetworkEvent.Context> contextSupplier) {
         var context = contextSupplier.get();
-        if (!message.hasEntity() || !message.hasModel()
-                || !ModelReferenceCodec.valid(message.getModel())) {
+        if (!ModelReferenceCodec.valid(message.model())) {
             context.setPacketHandled(true);
             return;
         }
-        var modelHash = ModelReferenceCodec.read(message.getModel());
-        var variables = clientVariables(message.getMolangVariables());
-        context.enqueueWork(() -> EntityLoadEvent.executeOnEntity(message.getEntity().getEntityId(),
-                entity -> applyVehicle(entity, modelHash, variables)));
+        var modelHash = ModelReferenceCodec.read(message.model());
+        var variables = clientVariables(message.molangVariables());
+        var connection = context.getNetworkManager();
+        context.enqueueWork(() -> ClientSessionRuntime.runIfCurrent(connection,
+                () -> EntityLoadEvent.executeOnEntity(message.entity().entityId(),
+                        entity -> applyVehicle(entity, modelHash, variables))));
         context.setPacketHandled(true);
     }
 
-    private static void setState(CommonV0.ModelReference target,
-                                 java.util.function.Consumer<CommonV0.MolangVariable> variableConsumer,
-                                 Hash256 modelHash,
-                                 Object2FloatOpenHashMap<String> variables) {
-        ModelReferenceCodec.write(target, modelHash, null);
+    private static void addVariables(
+            Consumer<MolangVariable> variableConsumer,
+            Object2FloatOpenHashMap<String> variables) {
         variables.object2FloatEntrySet().fastForEach(entry -> variableConsumer.accept(
-                CommonV0.MolangVariable.newInstance()
+                MolangVariable.newBuilder()
                         .setName(entry.getKey())
-                        .setValue(entry.getFloatValue())));
+                        .setValue(entry.getFloatValue()).build()));
     }
 
     private static Int2FloatOpenHashMap clientVariables(
-            Iterable<CommonV0.MolangVariable> variables) {
+            Iterable<MolangVariable> variables) {
         var result = new Int2FloatOpenHashMap();
         for (var variable : variables) {
-            result.put(StringPool.computeIfAbsent(variable.getName()), variable.getValue());
+            result.put(StringPool.computeIfAbsent(variable.name()), variable.value_());
         }
         return result;
     }

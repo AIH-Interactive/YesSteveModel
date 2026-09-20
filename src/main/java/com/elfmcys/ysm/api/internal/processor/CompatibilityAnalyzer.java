@@ -1,8 +1,5 @@
 package com.elfmcys.ysm.api.internal.processor;
 
-import static com.elfmcys.ysm.api.internal.processor.ExtensionPlan.RequirementKind.FIELD;
-import static com.elfmcys.ysm.api.internal.processor.ExtensionPlan.RequirementKind.METHOD;
-
 import com.elfmcys.ysm.api.internal.processor.asm.ConstantDynamic;
 import com.elfmcys.ysm.api.internal.processor.asm.Handle;
 import com.elfmcys.ysm.api.internal.processor.asm.Opcodes;
@@ -22,6 +19,7 @@ import com.elfmcys.ysm.api.internal.processor.asm.tree.MethodNode;
 import com.elfmcys.ysm.api.internal.processor.asm.tree.MultiANewArrayInsnNode;
 import com.elfmcys.ysm.api.internal.processor.asm.tree.TypeInsnNode;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashSet;
@@ -30,6 +28,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+
+import static com.elfmcys.ysm.api.internal.processor.ExtensionPlan.RequirementKind.FIELD;
+import static com.elfmcys.ysm.api.internal.processor.ExtensionPlan.RequirementKind.METHOD;
 
 final class CompatibilityAnalyzer {
     static final String YSM_PREFIX = "com/elfmcys/ysm/";
@@ -672,7 +673,7 @@ final class CompatibilityAnalyzer {
     }
 
     private static List<String> directParents(ClassNode node) {
-        var parents = new java.util.ArrayList<String>();
+        var parents = new ArrayList<String>();
         if (node.superName != null) {
             parents.add(node.superName);
         }

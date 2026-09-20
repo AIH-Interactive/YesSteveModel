@@ -1,7 +1,8 @@
 package com.elfmcys.ysm.network.protocol;
 
 import com.elfmcys.ysm.model.domain.Hash256;
-import com.elfmcys.ysm.proto.network.protocol.v0.CommonV0;
+import com.elfmcys.ysm.proto.network.ModelReference;
+import java.nio.ByteBuffer;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -14,12 +15,10 @@ class ModelReferenceCodecTest {
     @Test
     void distinguishesIntrinsicDefaultFromRegularHash() {
         var hash = hash(1);
-        var regular = CommonV0.ModelReference.newInstance();
-        ModelReferenceCodec.write(regular, hash, null);
+        var regular = ModelReferenceCodec.create(hash, null);
         assertEquals(hash, ModelReferenceCodec.read(regular));
 
-        var builtin = CommonV0.ModelReference.newInstance();
-        ModelReferenceCodec.write(builtin, null, hash);
+        var builtin = ModelReferenceCodec.create(null, hash);
         assertNull(ModelReferenceCodec.read(builtin));
         assertTrue(ModelReferenceCodec.valid(builtin));
     }
@@ -27,11 +26,11 @@ class ModelReferenceCodecTest {
     @Test
     void rejectsAbsentFalseAndTruncatedReferences() {
         assertThrows(IllegalArgumentException.class, () -> ModelReferenceCodec.read(null));
-        assertFalse(ModelReferenceCodec.valid(CommonV0.ModelReference.newInstance()));
-        assertFalse(ModelReferenceCodec.valid(CommonV0.ModelReference.newInstance()
-                .setBuiltinDefault(false)));
-        assertFalse(ModelReferenceCodec.valid(CommonV0.ModelReference.newInstance()
-                .setModelHash(new byte[Hash256.SIZE - 1])));
+        assertFalse(ModelReferenceCodec.valid(ModelReference.newBuilder().build()));
+        assertFalse(ModelReferenceCodec.valid(ModelReference.newBuilder()
+                .setBuiltinDefault(false).build()));
+        assertFalse(ModelReferenceCodec.valid(ModelReference.newBuilder()
+                .setModelHash(ByteBuffer.wrap(new byte[Hash256.SIZE - 1])).build()));
     }
 
     private static Hash256 hash(int marker) {

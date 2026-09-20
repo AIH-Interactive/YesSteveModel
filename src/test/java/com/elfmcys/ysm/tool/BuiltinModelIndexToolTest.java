@@ -1,7 +1,7 @@
 package com.elfmcys.ysm.tool;
 
-import com.elfmcys.ysm.model.catalog.BuiltinModelIndex;
-import com.elfmcys.ysm.model.catalog.DefaultAnimationKey;
+import com.elfmcys.ysm.model.catalog.builtin.BuiltinModelIndex;
+import com.elfmcys.ysm.model.catalog.content.DefaultAnimationKey;
 import com.elfmcys.ysm.model.domain.Hash256;
 import com.elfmcys.ysm.model.domain.ModelPath;
 import org.junit.jupiter.api.Test;

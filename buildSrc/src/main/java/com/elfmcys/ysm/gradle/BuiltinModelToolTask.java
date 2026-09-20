@@ -1,5 +1,11 @@
 package com.elfmcys.ysm.gradle;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import javax.inject.Inject;
 import org.gradle.api.DefaultTask;
 import org.gradle.api.GradleException;
 import org.gradle.api.file.ConfigurableFileCollection;
@@ -20,12 +26,6 @@ import org.gradle.api.tasks.PathSensitive;
 import org.gradle.api.tasks.PathSensitivity;
 import org.gradle.api.tasks.TaskAction;
 import org.gradle.process.ExecOperations;
-
-import javax.inject.Inject;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.util.ArrayList;
-import java.util.List;
 
 /** Runs the builtin validation tool in an isolated JVM with a complete cache contract. */
 @CacheableTask
@@ -115,8 +115,8 @@ public abstract class BuiltinModelToolTask extends DefaultTask {
         }
     }
 
-    private List<String> arguments(java.nio.file.Path output,
-                                   java.nio.file.Path workDirectory) {
+    private List<String> arguments(Path output,
+                                   Path workDirectory) {
         var arguments = new ArrayList<String>();
         var command = getCommand().get();
         arguments.add(command);

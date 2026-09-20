@@ -1,325 +1,434 @@
 package com.elfmcys.ysm.model.catalog;
 
+import com.elfmcys.ysm.format.AssetLoadException;
+import com.elfmcys.ysm.format.parser.RawModelDiagnostic;
+import com.elfmcys.ysm.model.catalog.builtin.BuiltinModelIndex;
+import com.elfmcys.ysm.model.catalog.content.CatalogContentBinding;
+import com.elfmcys.ysm.model.catalog.snapshot.CatalogCandidate;
+import com.elfmcys.ysm.model.catalog.snapshot.CatalogIndexEntry;
+import com.elfmcys.ysm.model.catalog.snapshot.CatalogIndexSnapshot;
+import com.elfmcys.ysm.model.catalog.snapshot.CatalogRecord;
+import com.elfmcys.ysm.model.catalog.snapshot.CatalogSnapshot;
+import com.elfmcys.ysm.model.catalog.source.CatalogBuildException;
+import com.elfmcys.ysm.model.catalog.source.CatalogInfrastructureException;
+import com.elfmcys.ysm.model.catalog.source.CatalogRootKind;
+import com.elfmcys.ysm.model.catalog.source.ModelCatalogSource;
+import com.elfmcys.ysm.model.catalog.source.ModelPackScanner;
+import com.elfmcys.ysm.model.catalog.source.ModelSourceDiscovery;
+import com.elfmcys.ysm.model.catalog.source.ModelSourceException;
+import com.elfmcys.ysm.model.catalog.source.ModelSourceResolver;
+import com.elfmcys.ysm.model.catalog.source.PackObservation;
+import com.elfmcys.ysm.model.catalog.source.RootInventoryState;
+import com.elfmcys.ysm.model.catalog.source.SourceObservation;
 import com.elfmcys.ysm.model.domain.Hash256;
+import com.elfmcys.ysm.model.domain.ModelPackDescriptor;
 import com.elfmcys.ysm.model.domain.ModelScanError;
 import com.elfmcys.ysm.model.domain.ModelScanReport;
-import com.elfmcys.ysm.model.storage.ModelFileHandle;
-
-import java.time.Duration;
+import com.elfmcys.ysm.model.domain.ModelScanWarning;
+import com.elfmcys.ysm.model.storage.ConvertedSourceIndex;
+import com.elfmcys.ysm.model.storage.ManagedContainer;
+import com.elfmcys.ysm.model.storage.ModelHashMismatchException;
+import java.io.IOException;
+import java.nio.file.FileSystemException;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
-/** Builds one immutable reloadable catalog candidate without publishing it. */
+/** Builds one complete immutable identity/content pair without publishing it. */
 public final class CatalogReconciler {
     private final List<ModelCatalogSource> roots;
     private final ModelSourceResolver resolver;
     private final ModelPackScanner packScanner = new ModelPackScanner();
-    private final Set<Hash256> builtinReservedHashes;
+    private final Set<Hash256> builtinReservedIds;
+    private final Map<Hash256, CatalogRecord> fixedRecords;
+    private final CatalogIndexSnapshot builtinIndex;
+    private final BuiltinModelIndex builtinContract;
 
     public CatalogReconciler(List<ModelCatalogSource> roots, ModelSourceResolver resolver,
-                             Set<Hash256> builtinReservedHashes) {
-        this.roots = List.copyOf(roots);
-        this.resolver = Objects.requireNonNull(resolver, "resolver");
-        this.builtinReservedHashes = Set.copyOf(builtinReservedHashes);
+                             Set<Hash256> builtinReservedIds,
+                             ManagedContainer intrinsicDefault,
+                             CatalogIndexSnapshot builtinIndex) {
+        this(roots, resolver, builtinReservedIds, intrinsicDefault, builtinIndex, null);
     }
 
-    public CatalogReconcileResult reconcile(ReloadableCatalogSnapshot base,
-                                            ReloadRequest request)
-            throws CatalogBuildException {
+    public CatalogReconciler(List<ModelCatalogSource> roots,
+                             ModelSourceResolver resolver,
+                             BuiltinModelIndex builtinContract,
+                             ManagedContainer intrinsicDefault) {
+        this(roots, resolver, builtinContract.entries().stream()
+                        .map(BuiltinModelIndex.Entry::modelHash)
+                        .collect(Collectors.toUnmodifiableSet()),
+                intrinsicDefault, CatalogIndexSnapshot.empty(), builtinContract);
+    }
+
+    private CatalogReconciler(List<ModelCatalogSource> roots,
+                              ModelSourceResolver resolver,
+                              Set<Hash256> builtinReservedIds,
+                              ManagedContainer intrinsicDefault,
+                              CatalogIndexSnapshot builtinIndex,
+                              BuiltinModelIndex builtinContract) {
+        this.roots = List.copyOf(roots);
+        this.resolver = Objects.requireNonNull(resolver, "resolver");
+        this.builtinReservedIds = Set.copyOf(builtinReservedIds);
+        Objects.requireNonNull(intrinsicDefault, "intrinsicDefault");
+        this.builtinIndex = Objects.requireNonNull(builtinIndex, "builtinIndex");
+        this.builtinContract = builtinContract;
+        fixedRecords = Map.of(intrinsicDefault.modelId(),
+                new CatalogRecord(intrinsicDefault.location(),
+                        new CatalogContentBinding(
+                                intrinsicDefault.modelId(), intrinsicDefault)));
+    }
+
+    ScanDiscovery discoverIncremental() {
         var startedAt = Instant.now();
-        var startedNanos = System.nanoTime();
-        var initial = discoverComplete();
-        var discoveryNanos = System.nanoTime() - startedNanos;
-        var acceptedSources = new LinkedHashMap<ModelSourceKey, SourceObservation>();
-        var acceptedPacks = new LinkedHashMap<ModelPackSourceKey, PackObservation>();
-        initial.values().forEach(root -> {
-            acceptedSources.putAll(root.sources());
-            acceptedPacks.putAll(root.packs());
-        });
-        base.sources().keySet().stream()
-                .filter(key -> !acceptedSources.containsKey(key))
-                .forEach(resolver::forgetIndex);
-
-        var sourceStates = new LinkedHashMap<ModelSourceKey, ModelSourceState>();
-        var packStates = new LinkedHashMap<ModelPackSourceKey, ModelPackSourceState>();
+        var complete = new LinkedHashMap<CatalogRootKind, RootInventoryState.Complete>();
         var errors = new ArrayList<ModelScanError>();
-        var touchedDirect = new HashSet<CatalogBackingKey>();
-        var revalidated = new HashSet<CatalogBackingKey>();
-        var stats = new StatsBuilder();
-        var probeBudget = new HashProbeBudget(2);
-
-        for (var observation : acceptedSources.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(Map.Entry::getValue).toList()) {
-            var previous = base.sources().get(observation.key());
-            var recovery = previous instanceof ModelSourceState.Ready ready
-                    && requestedRecovery(request, ready);
-            if (canReuse(request, observation, previous, recovery)) {
-                sourceStates.put(observation.key(), previous);
-                stats.reused++;
-                if (previous instanceof ModelSourceState.Rejected rejected) {
-                    errors.add(rejected.error());
-                    stats.rejected++;
-                }
+        for (var root : roots) {
+            var inventory = ModelSourceDiscovery.inventory(root);
+            if (inventory instanceof RootInventoryState.Incomplete incomplete) {
+                errors.add(incomplete.error());
                 continue;
             }
+            var value = (RootInventoryState.Complete) inventory;
+            if (root.rootKind() == CatalogRootKind.BUILTIN && builtinContract != null) {
+                try {
+                    builtinContract.validateCoverage(value.sources().values().stream()
+                            .map(source -> source.key().relativePath()).toList());
+                } catch (IOException | RuntimeException failure) {
+                    errors.add(ModelScanError.infrastructure(root.rootKind(),
+                            root.path().toString(), "BUILTIN_INVENTORY_MISMATCH", failure));
+                    continue;
+                }
+            }
+            complete.put(root.rootKind(), value);
+        }
+        var observations = complete.values().stream()
+                .flatMap(root -> root.sources().values().stream())
+                .filter(source -> !(source.key().root().rootKind()
+                        == CatalogRootKind.BUILTIN
+                        && source.key().relativePath().value().equals("default")))
+                .sorted(Comparator
+                        .comparingInt((SourceObservation source) ->
+                                rootPriority(source.key().root().rootKind()))
+                        .thenComparing(source -> source.key().relativePath().value()))
+                .toList();
+        var packs = complete.values().stream()
+                .flatMap(root -> root.packs().values().stream())
+                .sorted(Comparator
+                        .comparingInt((PackObservation pack) ->
+                                rootPriority(pack.key().root().rootKind()))
+                        .thenComparing(pack -> pack.key().hierarchy()))
+                .toList();
+        return new ScanDiscovery(startedAt, complete, observations, packs, errors,
+                complete.size() == roots.size());
+    }
 
+    ResolvedSource resolveIncremental(SourceObservation observation) {
+        ModelSourceResolver.MaterializedResolution result = null;
+        try {
+            result = resolver.resolveMaterialized(observation);
+            if (builtinContract != null
+                    && observation.key().root().rootKind() == CatalogRootKind.BUILTIN) {
+                var expected = builtinContract.require(observation.key().relativePath());
+                if (!expected.equals(result.entry().modelId())) {
+                    throw new ModelHashMismatchException(
+                            result.entry().location(), expected, result.entry().modelId());
+                }
+            }
+            var after = ModelSourceDiscovery.observe(
+                    observation.key(), observation.absolutePath());
+            if (!after.equals(observation)) {
+                throw new IOException("Model source changed while loading: "
+                        + observation.absolutePath());
+            }
+            var warnings = scanWarnings(observation, result.diagnostics());
+            return new ResolvedSource(observation, result.entry(), result.content(),
+                    result.convertedIndexEntry(), warnings, null);
+        } catch (Throwable failure) {
+            if (result != null) {
+                result.content().representation().close();
+            }
+            if (failure instanceof Error fatal) {
+                throw fatal;
+            }
+            return new ResolvedSource(observation, null, null,
+                    Optional.empty(), List.of(),
+                    ModelScanError.from(observation.key().root().rootKind(),
+                            observation.key().relativePath().value(), failure));
+        }
+    }
+
+    ResolvedPack resolveIncremental(PackObservation observation) {
+        try {
+            var root = new ModelCatalogSource(
+                    observation.key().root().rootKind(),
+                    observation.key().root().canonicalAbsoluteRoot(), false);
+            return new ResolvedPack(observation,
+                    packScanner.scan(root, observation.directory()), null);
+        } catch (Throwable failure) {
+            if (failure instanceof Error fatal) {
+                throw fatal;
+            }
+            return new ResolvedPack(observation, Optional.empty(),
+                    ModelScanError.from(observation.key().root().rootKind(),
+                            observation.key().hierarchy(), failure));
+        }
+    }
+
+    void verifyDiscovery(ScanDiscovery discovery) throws CatalogInfrastructureException {
+        if (!discovery.allRootsComplete()) {
+            throw new CatalogInfrastructureException("Catalog inventory is incomplete");
+        }
+        for (var root : roots) {
+            var expected = discovery.completeRoots().get(root.rootKind());
+            if (expected == null) {
+                continue;
+            }
+            if (!expected.equals(ModelSourceDiscovery.inventory(root))) {
+                throw new CatalogInfrastructureException(
+                        "Model root changed while scanning: " + root.path());
+            }
+        }
+    }
+
+    void replaceIncrementalIndex(Set<String> rootNamespaces,
+                                 Collection<ConvertedSourceIndex> entries)
+            throws CatalogInfrastructureException {
+        resolver.replaceIndex(rootNamespaces, entries);
+    }
+
+    Map<Hash256, CatalogRecord> fixedRecords() {
+        return fixedRecords;
+    }
+
+    private static int rootPriority(CatalogRootKind root) {
+        return switch (root) {
+            case BUILTIN -> 0;
+            case AUTH -> 1;
+            case CUSTOM -> 2;
+        };
+    }
+
+    record ScanDiscovery(Instant startedAt,
+                         Map<CatalogRootKind, RootInventoryState.Complete> completeRoots,
+                         List<SourceObservation> sources,
+                         List<PackObservation> packs,
+                         List<ModelScanError> errors,
+                         boolean allRootsComplete) {
+        ScanDiscovery {
+            completeRoots = Map.copyOf(completeRoots);
+            sources = List.copyOf(sources);
+            packs = List.copyOf(packs);
+            errors = List.copyOf(errors);
+        }
+    }
+
+    record ResolvedSource(SourceObservation observation, CatalogIndexEntry entry,
+                          ManagedContainer content,
+                          Optional<ConvertedSourceIndex> convertedIndex,
+                          List<ModelScanWarning> warnings, ModelScanError error) {
+        ResolvedSource {
+            Objects.requireNonNull(observation, "observation");
+            convertedIndex = Objects.requireNonNull(convertedIndex, "convertedIndex");
+            warnings = List.copyOf(warnings);
+            if ((entry == null) == (error == null)
+                    || (content == null) != (entry == null)) {
+                throw new IllegalArgumentException(
+                        "Resolved source must contain exactly one outcome");
+            }
+        }
+    }
+
+    record ResolvedPack(PackObservation observation,
+                        Optional<ModelPackDescriptor> pack, ModelScanError error) {
+        ResolvedPack {
+            Objects.requireNonNull(observation, "observation");
+            pack = Objects.requireNonNull(pack, "pack");
+        }
+    }
+
+    /** Builds the side-local startup state without retaining optional content process-wide. */
+    public CatalogCandidate materializeBuiltins() throws CatalogBuildException {
+        return materialize(List.copyOf(builtinIndex.entries()),
+                builtinIndex.packs(), new ArrayList<>(builtinIndex.report().errors()),
+                new ArrayList<>(builtinIndex.report().warnings()), Instant.now());
+    }
+
+    public CatalogCandidate reconcile() throws CatalogBuildException {
+        var startedAt = Instant.now();
+        var initial = discoverComplete();
+        var observations = initial.values().stream()
+                .flatMap(root -> root.sources().values().stream()).toList();
+        var packObservations = initial.values().stream()
+                .flatMap(root -> root.packs().values().stream()).toList();
+
+        var entries = new ArrayList<>(builtinIndex.entries());
+        var convertedIndexes = new ArrayList<ConvertedSourceIndex>();
+        var packs = new ArrayList<>(builtinIndex.packs());
+        var errors = new ArrayList<>(builtinIndex.report().errors());
+        var warnings = new ArrayList<>(builtinIndex.report().warnings());
+        for (var observation : observations) {
             try {
-                var previousReady = previous instanceof ModelSourceState.Ready ready
-                        ? java.util.Optional.of(ready) : java.util.Optional.<ModelSourceState.Ready>empty();
-                var result = resolver.resolve(observation, previousReady, probeBudget, recovery);
-                acceptedSources.put(observation.key(), result.observation());
-                var ready = new ModelSourceState.Ready(result.observation(),
-                        result.handle().descriptor().modelHash(), result.handle());
-                sourceStates.put(observation.key(), ready);
-                stats.accept(result.route());
-                collectBackingSignals(request, previousReady.orElse(null), ready,
-                        touchedDirect, revalidated);
-            } catch (ModelSourceException error) {
-                var report = new ModelScanError(Instant.now(),
+                var result = resolver.resolve(observation);
+                entries.add(result.entry());
+                result.convertedIndexEntry().ifPresent(convertedIndexes::add);
+                warnings.addAll(scanWarnings(observation, result.diagnostics()));
+            } catch (ModelSourceException failure) {
+                errors.add(ModelScanError.from(observation.key().root().rootKind(),
+                        observation.key().relativePath().value(), failure));
+            }
+        }
+        for (var observation : packObservations) {
+            try {
+                var root = new ModelCatalogSource(
                         observation.key().root().rootKind(),
-                        observation.key().relativePath().value(),
-                        ModelScanError.Category.MODEL_SOURCE, "SOURCE_REJECTED",
-                        Objects.requireNonNullElse(error.getMessage(), "Model source rejected"),
-                        stackTrace(error));
-                sourceStates.put(observation.key(), new ModelSourceState.Rejected(observation, report));
-                errors.add(report);
-                stats.rejected++;
-            }
-        }
-
-        for (var observation : acceptedPacks.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey()).map(Map.Entry::getValue).toList()) {
-            var previous = base.packSources().get(observation.key());
-            if (request.auditLevel() == AuditLevel.INCREMENTAL
-                    && previous != null && previous.observation().equals(observation)
-                    && !isTouched(request, observation.directory())) {
-                packStates.put(observation.key(), previous);
-                if (previous instanceof ModelPackSourceState.Rejected rejected) {
-                    errors.add(rejected.error());
-                    stats.rejected++;
-                }
-                continue;
-            }
-            try {
-                var effectiveRoot = new ModelCatalogSource(observation.key().root().rootKind(),
                         observation.key().root().canonicalAbsoluteRoot(), false);
-                var descriptor = packScanner.scan(effectiveRoot, observation.directory())
-                        .orElseThrow(() -> new ModelPackException(
-                                "Observed model pack manifest disappeared"));
-                packStates.put(observation.key(),
-                        new ModelPackSourceState.Ready(observation, descriptor));
-            } catch (ModelPackException error) {
-                addRejectedPack(observation, error, packStates, errors, stats);
-            } catch (Exception error) {
-                addRejectedPack(observation,
-                        new ModelPackException("Failed to read model pack", error),
-                        packStates, errors, stats);
+                packScanner.scan(root, observation.directory()).ifPresent(packs::add);
+            } catch (Exception failure) {
+                errors.add(ModelScanError.from(observation.key().root().rootKind(),
+                        observation.key().hierarchy(), failure));
             }
         }
 
-        verifyFinalInventory(initial, acceptedSources, acceptedPacks);
+        verifyFinalInventory(initial);
+        resolver.replaceIndex(roots.stream().map(root -> root.rootKind().namespace())
+                .collect(Collectors.toUnmodifiableSet()), convertedIndexes);
+        var sortedPacks = packs.stream().sorted().toList();
+        return materialize(entries, sortedPacks, errors, warnings, startedAt);
+    }
 
-        var models = selectModels(sourceStates, errors, stats);
-        var packs = packStates.values().stream()
-                .filter(ModelPackSourceState.Ready.class::isInstance)
-                .map(ModelPackSourceState.Ready.class::cast)
-                .map(ModelPackSourceState.Ready::descriptor).sorted().toList();
-        var report = new ModelScanReport(startedAt, Instant.now(), errors);
-        var snapshot = new ReloadableCatalogSnapshot(base.reloadGeneration() + 1, true,
-                sourceStates, packStates, models, packs, report);
-        var reloadStats = stats.build(discoveryNanos,
-                Duration.ofNanos(System.nanoTime() - startedNanos));
-        return new CatalogReconcileResult(snapshot, touchedDirect, revalidated, reloadStats);
+    private CatalogCandidate materialize(List<CatalogIndexEntry> entries,
+                                         List<ModelPackDescriptor> packs,
+                                         List<ModelScanError> errors,
+                                         List<ModelScanWarning> warnings,
+                                         Instant startedAt)
+            throws CatalogInfrastructureException {
+        var content = new ArrayList<ManagedContainer>();
+        for (var entry : entries) {
+            try {
+                content.add(ManagedContainer.openIndexed(entry));
+            } catch (AssetLoadException failure) {
+                if (failure.reason() == AssetLoadException.Reason.ACCESS) {
+                    throw new CatalogInfrastructureException(
+                            "Failed to access indexed model container: "
+                                    + entry.backingFile(), failure);
+                }
+                errors.add(ModelScanError.from(entry.location().rootKind(),
+                        entry.location().path().value(), failure));
+            } catch (FileSystemException | SecurityException failure) {
+                throw new CatalogInfrastructureException(
+                        "Failed to access indexed model container: " + entry.backingFile(),
+                        failure);
+            } catch (IOException | RuntimeException failure) {
+                errors.add(ModelScanError.from(entry.location().rootKind(),
+                        entry.location().path().value(), failure));
+            }
+        }
+
+        var records = selectFirstValid(content, errors);
+        var report = new ModelScanReport(startedAt, Instant.now(), errors, warnings);
+        var index = new CatalogIndexSnapshot(entries, packs, report);
+        var snapshot = new CatalogSnapshot(records, packs, report);
+        return new CatalogCandidate(index, snapshot);
     }
 
     private Map<CatalogRootKind, RootInventoryState.Complete> discoverComplete()
             throws CatalogInfrastructureException {
         var result = new LinkedHashMap<CatalogRootKind, RootInventoryState.Complete>();
-        for (var source : roots) {
-            var inventory = ModelSourceDiscovery.inventory(source);
+        for (var root : roots) {
+            var inventory = ModelSourceDiscovery.inventory(root);
             if (inventory instanceof RootInventoryState.Incomplete incomplete) {
                 throw new CatalogInfrastructureException(
-                        "Model root inventory is incomplete: " + source.path(),
-                        new java.io.IOException(incomplete.error().message()));
+                        "Model root inventory is incomplete: " + root.path(),
+                        new IOException(incomplete.error().message()));
             }
-            var complete = (RootInventoryState.Complete) inventory;
-            result.put(source.rootKind(), complete);
+            result.put(root.rootKind(), (RootInventoryState.Complete) inventory);
         }
         return result;
     }
 
-    private void verifyFinalInventory(Map<CatalogRootKind, RootInventoryState.Complete> initial,
-                                      Map<ModelSourceKey, SourceObservation> acceptedSources,
-                                      Map<ModelPackSourceKey, PackObservation> acceptedPacks)
-            throws CatalogBuildException {
+    private static List<ModelScanWarning> scanWarnings(
+            SourceObservation observation, List<RawModelDiagnostic> diagnostics) {
+        var warnings = new ArrayList<ModelScanWarning>();
+        for (var kind : RawModelDiagnostic.Kind.values()) {
+            int occurrences = (int) diagnostics.stream()
+                    .filter(diagnostic -> diagnostic.kind() == kind)
+                    .count();
+            if (occurrences == 0) {
+                continue;
+            }
+            var warningKind = switch (kind) {
+                case UNKNOWN_AUDIO -> ModelScanWarning.Kind.UNKNOWN_AUDIO;
+                case INVALID_AUDIO -> ModelScanWarning.Kind.INVALID_AUDIO;
+            };
+            warnings.add(new ModelScanWarning(
+                    observation.key().root().rootKind(),
+                    observation.key().relativePath().value(), warningKind, occurrences));
+        }
+        return List.copyOf(warnings);
+    }
+
+    private void verifyFinalInventory(
+            Map<CatalogRootKind, RootInventoryState.Complete> initial)
+            throws CatalogInfrastructureException {
         for (var root : roots) {
             var finalState = ModelSourceDiscovery.inventory(root);
-            if (finalState instanceof RootInventoryState.Incomplete incomplete) {
+            if (!(finalState instanceof RootInventoryState.Complete complete)
+                    || !complete.equals(initial.get(root.rootKind()))) {
                 throw new CatalogInfrastructureException(
-                        "Final model root inventory is incomplete: " + root.path(),
-                        new java.io.IOException(incomplete.error().message()));
-            }
-            var actual = (RootInventoryState.Complete) finalState;
-            var expectedRoot = initial.get(root.rootKind()).root();
-            var expectedSources = acceptedSources.entrySet().stream()
-                    .filter(entry -> entry.getKey().root().rootKind() == root.rootKind())
-                    .collect(LinkedHashMap::new,
-                            (map, entry) -> map.put(entry.getKey(), entry.getValue()),
-                            LinkedHashMap::putAll);
-            var expectedPacks = acceptedPacks.entrySet().stream()
-                    .filter(entry -> entry.getKey().root().rootKind() == root.rootKind())
-                    .collect(LinkedHashMap::new,
-                            (map, entry) -> map.put(entry.getKey(), entry.getValue()),
-                            LinkedHashMap::putAll);
-            if (!actual.root().equals(expectedRoot)
-                    || !actual.sources().equals(expectedSources)
-                    || !actual.packs().equals(expectedPacks)) {
-                throw new CatalogInventoryChangedException(
-                        "Model root changed before catalog commit: " + root.path());
+                        "Model root changed while building catalog: " + root.path());
             }
         }
     }
 
-    private Map<Hash256, ModelFileHandle> selectModels(
-            Map<ModelSourceKey, ModelSourceState> states,
-            List<ModelScanError> errors, StatsBuilder stats) {
-        var ready = states.values().stream().filter(ModelSourceState.Ready.class::isInstance)
-                .map(ModelSourceState.Ready.class::cast).toList();
-        var byHash = new HashMap<Hash256, List<ModelSourceState.Ready>>();
-        var byLocation = new HashMap<CatalogModelLocation, List<ModelSourceState.Ready>>();
-        ready.forEach(value -> {
-            byHash.computeIfAbsent(value.modelHash(), ignored -> new ArrayList<>()).add(value);
-            byLocation.computeIfAbsent(value.handle().location(), ignored -> new ArrayList<>()).add(value);
-        });
-        var rejected = new HashSet<ModelSourceState.Ready>();
-        byHash.forEach((hash, group) -> {
-            if (group.size() > 1) {
-                rejected.addAll(group);
-                group.forEach(value -> errors.add(conflict(value,
-                        "DUPLICATE_MODEL_HASH", "Duplicate full model hash " + hash)));
+    private Map<Hash256, CatalogRecord> selectFirstValid(
+            List<ManagedContainer> candidates, List<ModelScanError> errors) {
+        var fixedPaths = fixedRecords.values().stream()
+                .map(record -> record.location().path().value())
+                .collect(Collectors.toUnmodifiableSet());
+        var byPath = new LinkedHashMap<String, ManagedContainer>();
+        for (var candidate : candidates) {
+            var location = candidate.location();
+            var path = location.path().value();
+            if (location.rootKind() != CatalogRootKind.BUILTIN
+                    && builtinReservedIds.contains(candidate.modelId())) {
+                errors.add(ModelScanError.from(location.rootKind(), path,
+                        new IllegalArgumentException(
+                                "Model id is reserved by a builtin model: "
+                                        + candidate.modelId())));
+                continue;
             }
-        });
-        byLocation.forEach((location, group) -> {
-            if (group.size() > 1) {
-                rejected.addAll(group);
-                group.forEach(value -> errors.add(conflict(value,
-                        "DUPLICATE_MODEL_LOCATION", "Duplicate model location " + location)));
+            if (fixedPaths.contains(path)) {
+                errors.add(ModelScanError.from(location.rootKind(), path,
+                        new IllegalArgumentException("Duplicate model path: " + path)));
+                continue;
             }
-        });
-        ready.stream().filter(value -> builtinReservedHashes.contains(value.modelHash()))
-                .forEach(value -> {
-                    rejected.add(value);
-                    errors.add(conflict(value, "BUILTIN_MODEL_HASH_RESERVED",
-                            "Model hash is reserved by a builtin model " + value.modelHash()));
-                });
-        stats.rejected += rejected.size();
-        var result = new LinkedHashMap<Hash256, ModelFileHandle>();
-        ready.stream().filter(value -> !rejected.contains(value))
-                .sorted((left, right) -> left.handle().location()
-                        .compareTo(right.handle().location()))
-                .forEach(value -> result.put(value.modelHash(), value.handle()));
+            var existing = byPath.get(path);
+            if (existing == null) {
+                byPath.put(path, candidate);
+            } else if (existing.location().rootKind() == CatalogRootKind.CUSTOM
+                    && location.rootKind() == CatalogRootKind.AUTH) {
+                byPath.put(path, candidate);
+            } else if (!(existing.location().rootKind() == CatalogRootKind.AUTH
+                    && location.rootKind() == CatalogRootKind.CUSTOM)) {
+                errors.add(ModelScanError.from(location.rootKind(), path,
+                        new IllegalArgumentException("Duplicate model path: " + path)));
+            }
+        }
+
+        var result = new LinkedHashMap<>(fixedRecords);
+        for (var candidate : byPath.values()) {
+            result.putIfAbsent(candidate.modelId(), new CatalogRecord(candidate.location(),
+                    new CatalogContentBinding(candidate.modelId(), candidate)));
+        }
         return result;
-    }
-
-    private static ModelScanError conflict(ModelSourceState.Ready value,
-                                           String code, String message) {
-        return new ModelScanError(Instant.now(), value.observation().key().root().rootKind(),
-                value.observation().key().relativePath().value(),
-                ModelScanError.Category.CONFLICT, code, message, "");
-    }
-
-    private static boolean canReuse(ReloadRequest request, SourceObservation observation,
-                                    ModelSourceState previous, boolean recovery) {
-        return request.auditLevel() == AuditLevel.INCREMENTAL
-                && previous != null && previous.observation().equals(observation)
-                && !recovery && !isTouched(request, observation.absolutePath());
-    }
-
-    private static boolean isTouched(ReloadRequest request, java.nio.file.Path source) {
-        return request.touchedPaths().stream()
-                .anyMatch(path -> path.equals(source) || path.startsWith(source)
-                        || source.startsWith(path));
-    }
-
-    private static boolean requestedRecovery(ReloadRequest request,
-                                             ModelSourceState.Ready previous) {
-        var key = new CatalogBackingKey(previous.handle().location(),
-                previous.handle().backingIdentity());
-        return request.recoveries().contains(new BackingRecoveryRequest(key));
-    }
-
-    private static void collectBackingSignals(ReloadRequest request,
-                                              ModelSourceState.Ready previous,
-                                              ModelSourceState.Ready current,
-                                              Set<CatalogBackingKey> touchedDirect,
-                                              Set<CatalogBackingKey> revalidated) {
-        if (previous == null) {
-            return;
-        }
-        var oldKey = new CatalogBackingKey(previous.handle().location(),
-                previous.handle().backingIdentity());
-        var newKey = new CatalogBackingKey(current.handle().location(),
-                current.handle().backingIdentity());
-        if (!oldKey.equals(newKey)) {
-            return;
-        }
-        if (requestedRecovery(request, previous)) {
-            revalidated.add(newKey);
-        } else if (current.observation().key().sourceKind()
-                == ModelSourceKind.DIRECT_CONTAINER
-                && isTouched(request, current.observation().absolutePath())) {
-            touchedDirect.add(newKey);
-        }
-    }
-
-    private static void addRejectedPack(PackObservation observation,
-                                        ModelPackException error,
-                                        Map<ModelPackSourceKey, ModelPackSourceState> states,
-                                        List<ModelScanError> errors,
-                                        StatsBuilder stats) {
-        var report = new ModelScanError(Instant.now(),
-                observation.key().root().rootKind(), observation.key().hierarchy(),
-                ModelScanError.Category.MODEL_PACK, "PACK_REJECTED",
-                Objects.requireNonNullElse(error.getMessage(), "Model pack rejected"),
-                stackTrace(error));
-        states.put(observation.key(), new ModelPackSourceState.Rejected(observation, report));
-        errors.add(report);
-        stats.rejected++;
-    }
-
-    private static String stackTrace(Throwable error) {
-        var output = new java.io.StringWriter();
-        error.printStackTrace(new java.io.PrintWriter(output));
-        return output.toString();
-    }
-
-    private static final class StatsBuilder {
-        private int reused;
-        private int directValidated;
-        private int hashProbeHits;
-        private int converted;
-        private int rejected;
-
-        private void accept(ModelSourceResolver.Route route) {
-            switch (route) {
-                case DIRECT_VALIDATED -> directValidated++;
-                case PROBE_HIT -> hashProbeHits++;
-                case CONVERTED -> converted++;
-            }
-        }
-
-        private ReloadStats build(long discoveryNanos, Duration total) {
-            return new ReloadStats(reused, directValidated, 0, hashProbeHits, 0,
-                    converted, rejected, 0, Duration.ofNanos(discoveryNanos),
-                    Duration.ZERO, Duration.ZERO, total);
-        }
     }
 }

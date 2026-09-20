@@ -1,16 +1,15 @@
 package com.elfmcys.ysm.api.internal.processor;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.elfmcys.ysm.api.internal.processor.asm.ClassReader;
 import com.elfmcys.ysm.api.internal.processor.asm.Opcodes;
 import com.elfmcys.ysm.api.internal.processor.asm.tree.ClassNode;
+import com.google.gson.JsonParser;
+import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -24,6 +23,10 @@ import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class YsmExtensionProcessorTest {
     @TempDir
@@ -305,7 +308,7 @@ class YsmExtensionProcessorTest {
         String json = Files.readString(manifest);
         assertTrue(json.startsWith("{\n"));
         assertTrue(json.endsWith("}\n"));
-        var document = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        var document = JsonParser.parseString(json).getAsJsonObject();
         assertEquals(1, document.get("version").getAsInt());
         assertTrue(document.get("canaryProbe").isJsonPrimitive());
         assertTrue(document.getAsJsonObject("groups").has(groupKey));
@@ -337,10 +340,10 @@ class YsmExtensionProcessorTest {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
         try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(
-                diagnostics, Locale.ROOT, java.nio.charset.StandardCharsets.UTF_8)) {
+                diagnostics, Locale.ROOT, StandardCharsets.UTF_8)) {
             String classpath = System.getProperty("java.class.path");
             for (Path path : extraClasspath) {
-                classpath += java.io.File.pathSeparator + path;
+                classpath += File.pathSeparator + path;
             }
             List<String> options = new ArrayList<>(List.of(
                     "--release", "17",

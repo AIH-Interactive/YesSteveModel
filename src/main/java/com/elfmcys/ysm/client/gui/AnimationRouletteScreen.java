@@ -8,25 +8,23 @@ import com.elfmcys.ysm.client.gui.button.*;
 import com.elfmcys.ysm.client.input.AnimationRouletteKey;
 import com.elfmcys.ysm.client.input.ExtraAnimationKey;
 import com.elfmcys.ysm.client.lang.LanguageManager;
-import com.elfmcys.ysm.client.model.ModelRenderTarget;
+import com.elfmcys.ysm.model.resource.client.ModelRenderTarget;
 import com.elfmcys.ysm.config.ClientConfig;
 import com.elfmcys.ysm.config.ServerConfig;
 import com.elfmcys.ysm.geckolib3.core.molang.value.IValue;
 import com.elfmcys.ysm.geckolib3.model.AnimatableEntity;
-import com.elfmcys.ysm.info.ModelProperties;
-import com.elfmcys.ysm.info.roulette.ExtraAnimationButton;
-import com.elfmcys.ysm.info.roulette.forms.CheckboxForms;
-import com.elfmcys.ysm.info.roulette.forms.ConfigForms;
-import com.elfmcys.ysm.info.roulette.forms.RadioForms;
-import com.elfmcys.ysm.info.roulette.forms.RangeForms;
 import com.elfmcys.ysm.molang.parser.ParseException;
 import com.elfmcys.ysm.network.NetworkHandler;
 import com.elfmcys.ysm.network.forge.ClientProtocolGateway;
-import com.elfmcys.ysm.util.FifoHashMap;
 import com.google.common.collect.Lists;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.*;
+import it.unimi.dsi.fastutil.objects.ObjectList;
+import com.elfmcys.ysm.proto.mixel.common.StringPair;
+import com.elfmcys.ysm.proto.mixel.manifest.info.ConfigForms;
+import com.elfmcys.ysm.proto.mixel.manifest.info.ExtraAnimationButton;
+import com.elfmcys.ysm.proto.mixel.manifest.info.ExtraAnimationClassify;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.gui.GuiGraphics;
@@ -103,19 +101,17 @@ public class AnimationRouletteScreen extends Screen {
     @Nullable
     private FlatColorButton scrollConfigDownBtn;
 
-    private final FifoHashMap<String, String> extraAnimationMap;
+    private final ObjectList<StringPair> extraAnimations;
     private final Map<String, ExtraAnimationButton> buttonMap;
-    private final Map<String, FifoHashMap<String, String>> classifyMap;
-    private final ModelProperties modelProperties;
+    private final Map<String, ExtraAnimationClassify> classifyMap;
     private final AnimatableEntity<?> animatableEntity;
     private final ModelRenderTarget model;
 
     public AnimationRouletteScreen(Map<String, ExtraAnimationButton> buttonMap,
-                                   Map<String, FifoHashMap<String, String>> classifyMap,
+                                   Map<String, ExtraAnimationClassify> classifyMap,
                                    ModelRenderTarget clientModel, AnimatableEntity<?> animatableEntity) {
         super(Component.literal("Animation Roulette GUI"));
         this.model = clientModel;
-        this.modelProperties = clientModel.info().properties();
         this.animatableEntity = animatableEntity;
         this.classifyMap = classifyMap;
         this.buttonMap = buttonMap;
@@ -123,9 +119,9 @@ public class AnimationRouletteScreen extends Screen {
         // 缓存的读取
         this.current = CACHE.peekLast();
         if (this.current != null && this.classifyMap.containsKey(current.getLeft())) {
-            this.extraAnimationMap = this.classifyMap.get(current.getLeft());
+            this.extraAnimations = this.classifyMap.get(current.getLeft()).extraAnimation();
         } else {
-            this.extraAnimationMap = this.modelProperties.extraAnimationOrderMap();
+            this.extraAnimations = clientModel.info().getExtraAnimations();
             CACHE.clear();
             CACHE.add(MutablePair.of(StringUtils.EMPTY, this.current == null ? 0 : this.current.getRight()));
             this.current = CACHE.peekLast();
@@ -135,10 +131,9 @@ public class AnimationRouletteScreen extends Screen {
     public AnimationRouletteScreen(String modelId, ModelRenderTarget model, AnimatableEntity<?> animatableEntity) {
         super(Component.literal("Animation Roulette GUI"));
         this.model = model;
-        this.modelProperties = model.info().properties();
         this.animatableEntity = animatableEntity;
-        this.classifyMap = this.modelProperties.extraAnimationClassifyMap();
-        this.buttonMap = this.modelProperties.extraAnimationButtonsMap();
+        this.classifyMap = model.info().getExtraAnimationClassifications();
+        this.buttonMap = model.info().getExtraAnimationButtons();
 
         // 如果 ID 和缓存的不一致，重置轮盘缓存
         if (!MODEL_ID.equals(modelId)) {
@@ -151,9 +146,9 @@ public class AnimationRouletteScreen extends Screen {
         }
         this.current = CACHE.peekLast();
         if (this.classifyMap.containsKey(current.getLeft())) {
-            this.extraAnimationMap = this.classifyMap.get(current.getLeft());
+            this.extraAnimations = this.classifyMap.get(current.getLeft()).extraAnimation();
         } else {
-            this.extraAnimationMap = this.modelProperties.extraAnimationOrderMap();
+            this.extraAnimations = model.info().getExtraAnimations();
             CACHE.clear();
             CACHE.add(MutablePair.of(StringUtils.EMPTY, this.current.getRight()));
             this.current = CACHE.peekLast();
@@ -166,10 +161,10 @@ public class AnimationRouletteScreen extends Screen {
 
         this.x = width / 2 - 70;
         this.y = height / 2 - 8;
-        if (this.extraAnimationMap.size() < (current.getRight() * MAX_ROULETTE_COUNT + 1)) {
+        if (this.extraAnimations.size() < (current.getRight() * MAX_ROULETTE_COUNT + 1)) {
             current.setValue(0);
         }
-        if (this.extraAnimationMap.size() <= this.selectId) {
+        if (this.extraAnimations.size() <= this.selectId) {
             this.selectId = 0;
         }
 
@@ -229,17 +224,17 @@ public class AnimationRouletteScreen extends Screen {
 
             final int[] yOffset = {-46};
             final int[] index = {0};
-            for (ConfigForms configForm : configButtons.getConfigForms()) {
+            for (ConfigForms configForm : configButtons.configForms()) {
                 this.addConfigForms(configForm, yOffset, index);
             }
         }
     }
 
     private void addConfigForms(ConfigForms configForm, int[] yOffset, int[] index) {
-        if (configForm instanceof CheckboxForms checkboxForms) {
-            this.executeMolang(configForm.value(), result -> {
+        if (configForm.type().equals("checkbox")) {
+            this.executeMolang(configForm.readProgram().source(), result -> {
                 minecraft.execute(() -> {
-                    FlatCheckbox checkbox = getFlatCheckbox(checkboxForms, result, yOffset, index);
+                    FlatCheckbox checkbox = getFlatCheckbox(configForm, result, yOffset, index);
                     this.addRenderableWidget(checkbox);
                     yOffset[0] += 14;
                     index[0]++;
@@ -249,10 +244,10 @@ public class AnimationRouletteScreen extends Screen {
             });
         }
 
-        if (configForm instanceof RangeForms rangeForms) {
-            this.executeMolang(configForm.value(), result -> {
+        if (configForm.type().equals("range")) {
+            this.executeMolang(configForm.readProgram().source(), result -> {
                 minecraft.execute(() -> {
-                    FlatSlider slider = getFlatSlider(rangeForms, result, yOffset, index);
+                    FlatSlider slider = getFlatSlider(configForm, result, yOffset, index);
                     this.addRenderableWidget(slider);
                     yOffset[0] += 17;
                     index[0]++;
@@ -262,16 +257,16 @@ public class AnimationRouletteScreen extends Screen {
             });
         }
 
-        if (configForm instanceof RadioForms radioForms) {
-            this.executeMolang(configForm.value(), result -> {
+        if (configForm.type().equals("radio")) {
+            this.executeMolang(configForm.readProgram().source(), result -> {
                 minecraft.execute(() -> {
-                    addRatioButtons(radioForms, result, yOffset, index);
+                    addRatioButtons(configForm, result, yOffset, index);
                 });
             });
         }
     }
 
-    private void addRatioButtons(RadioForms radioForms, String result, int[] yOffset, int[] index) {
+    private void addRatioButtons(ConfigForms radioForms, String result, int[] yOffset, int[] index) {
         int selectedIndex = Math.round(transformNumber(result));
         var labels = radioForms.labels();
         if (selectedIndex < 0 || labels.size() < selectedIndex) {
@@ -282,8 +277,9 @@ public class AnimationRouletteScreen extends Screen {
         // 遍历获取最长的行的长度
         int lineMaxWidth = 0;
         int labelsIndex = 0;
-        for (String labelName : labels.keyList()) {
-            String labelStr = LanguageManager.getI18n(this.model, CONFIG_LABELS.formatted(this.configButtons.getId(), index[0], labelsIndex), labelName);
+        for (var label : labels) {
+            String labelStr = LanguageManager.getI18n(this.model,
+                    CONFIG_LABELS.formatted(this.configButtons.id(), index[0], labelsIndex), label.name());
             lineMaxWidth = Math.max(lineMaxWidth, font.width(labelStr) + 16);
             labelsIndex++;
         }
@@ -292,8 +288,8 @@ public class AnimationRouletteScreen extends Screen {
         }
         int countPerLine = Math.max(1, 115 / lineMaxWidth);
 
-        String titleStr = LanguageManager.getI18n(this.model, CONFIG_TITLE.formatted(this.configButtons.getId(), index[0]), radioForms.title());
-        String descStr = LanguageManager.getI18n(this.model, CONFIG_DESC.formatted(this.configButtons.getId(), index[0]), radioForms.description());
+        String titleStr = LanguageManager.getI18n(this.model, CONFIG_TITLE.formatted(this.configButtons.id(), index[0]), radioForms.title());
+        String descStr = LanguageManager.getI18n(this.model, CONFIG_DESC.formatted(this.configButtons.id(), index[0]), radioForms.description());
 
         Component title = Component.literal(titleStr);
         Tooltip description = Tooltip.create(Component.literal(descStr));
@@ -305,10 +301,12 @@ public class AnimationRouletteScreen extends Screen {
         // 遍历添加每个 label
         int tempYOffset = yOffset[0] + 14;
         for (int i = 0; i < labels.size(); i++) {
-            String labelStr = LanguageManager.getI18n(this.model, CONFIG_LABELS.formatted(this.configButtons.getId(), index[0], i), labels.getKeyAt(i));
+            var label = labels.get(i);
+            String labelStr = LanguageManager.getI18n(this.model,
+                    CONFIG_LABELS.formatted(this.configButtons.id(), index[0], i), label.name());
 
             Component labelName = Component.literal(labelStr);
-            String labelValue = labels.getValueAt(i);
+            String labelValue = label.actionProgram().source();
             boolean isSelected = selectedIndex == i;
 
             int perWidth = Math.round(110f / countPerLine);
@@ -341,24 +339,26 @@ public class AnimationRouletteScreen extends Screen {
     }
 
     @NotNull
-    private FlatSlider getFlatSlider(RangeForms rangeForms, String result, int[] yOffset, int[] index) {
-        String titleStr = LanguageManager.getI18n(this.model, CONFIG_TITLE.formatted(this.configButtons.getId(), index[0]), rangeForms.title());
-        String descStr = LanguageManager.getI18n(this.model, CONFIG_DESC.formatted(this.configButtons.getId(), index[0]), rangeForms.description());
+    private FlatSlider getFlatSlider(ConfigForms rangeForms, String result, int[] yOffset, int[] index) {
+        String titleStr = LanguageManager.getI18n(this.model, CONFIG_TITLE.formatted(this.configButtons.id(), index[0]), rangeForms.title());
+        String descStr = LanguageManager.getI18n(this.model, CONFIG_DESC.formatted(this.configButtons.id(), index[0]), rangeForms.description());
 
         Component title = Component.literal(titleStr);
         Tooltip description = Tooltip.create(Component.literal(descStr));
         float number = transformNumber(result);
 
-        FlatSlider slider = new FlatSlider(this.x + 125, this.y + yOffset[0], title, number, this.animatableEntity, rangeForms.value(), rangeForms.step(), rangeForms.min(), rangeForms.max());
+        FlatSlider slider = new FlatSlider(this.x + 125, this.y + yOffset[0], title, number,
+                this.animatableEntity, rangeForms.readProgram().source(), rangeForms.step(),
+                rangeForms.min(), rangeForms.max());
         slider.setTooltip(description);
 
         return slider;
     }
 
     @NotNull
-    private FlatCheckbox getFlatCheckbox(CheckboxForms checkboxForms, String result, int[] yOffset, int[] index) {
-        String titleStr = LanguageManager.getI18n(this.model, CONFIG_TITLE.formatted(this.configButtons.getId(), index[0]), checkboxForms.title());
-        String descStr = LanguageManager.getI18n(this.model, CONFIG_DESC.formatted(this.configButtons.getId(), index[0]), checkboxForms.description());
+    private FlatCheckbox getFlatCheckbox(ConfigForms checkboxForms, String result, int[] yOffset, int[] index) {
+        String titleStr = LanguageManager.getI18n(this.model, CONFIG_TITLE.formatted(this.configButtons.id(), index[0]), checkboxForms.title());
+        String descStr = LanguageManager.getI18n(this.model, CONFIG_DESC.formatted(this.configButtons.id(), index[0]), checkboxForms.description());
 
         Component title = Component.literal(titleStr);
         Tooltip description = Tooltip.create(Component.literal(descStr));
@@ -368,7 +368,7 @@ public class AnimationRouletteScreen extends Screen {
         FlatCheckbox checkbox = new FlatCheckbox(this.x + 125, this.y + yOffset[0], title, data -> {
             // 手动拼接 molang 字符串进行赋值操作
             String value = data ? "1" : "0";
-            String molang = checkboxForms.value() + "=" + value;
+            String molang = checkboxForms.readProgram().source() + "=" + value;
             executeMolang(molang, null);
             if (!CustomMolangParser.hasOnlyRoamingAssignment(molang) && NetworkHandler.isRemoteChannelPresent() && !ServerConfig.LOW_BANDWIDTH_USAGE.get()) {
                 // 同步到周围的玩家
@@ -440,8 +440,8 @@ public class AnimationRouletteScreen extends Screen {
     }
 
     private void drawTooltips(GuiGraphics graphics, int mouseX, int mouseY) {
-        if (-1 < selectId && selectId < extraAnimationMap.size()) {
-            String key = extraAnimationMap.getKeyAt(selectId);
+        if (-1 < selectId && selectId < extraAnimations.size()) {
+            String key = extraAnimations.get(selectId).key();
             String descKey = "properties.extra_animation.%s.desc".formatted(key);
             String desc = LanguageManager.getI18n(this.model, descKey, StringUtils.EMPTY);
             if (StringUtils.isNotBlank(desc)) {
@@ -462,7 +462,7 @@ public class AnimationRouletteScreen extends Screen {
 
     private void drawPageText(GuiGraphics graphics) {
         graphics.fill(this.x + 157, this.y - 87, this.x + 238, this.y - 72, 0, 0xCF000000);
-        String pageText = String.format("%d/%d", current.getRight() + 1, (this.extraAnimationMap.size() - 1) / MAX_ROULETTE_COUNT + 1);
+        String pageText = String.format("%d/%d", current.getRight() + 1, (this.extraAnimations.size() - 1) / MAX_ROULETTE_COUNT + 1);
         graphics.drawCenteredString(font, pageText, this.x + 197, this.y - 83, ChatFormatting.AQUA.getColor());
     }
 
@@ -495,7 +495,7 @@ public class AnimationRouletteScreen extends Screen {
 
     private void pageDown() {
         int page = (current.getRight() + 1) * MAX_ROULETTE_COUNT;
-        if (this.extraAnimationMap.size() > page) {
+        if (this.extraAnimations.size() > page) {
             current.setValue(current.getRight() + 1);
         }
     }
@@ -510,10 +510,10 @@ public class AnimationRouletteScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (-1 < selectId && selectId < extraAnimationMap.size()) {
+        if (-1 < selectId && selectId < extraAnimations.size()) {
             // 点击普通界面
             this.getMinecraft().getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
-            String selectKey = extraAnimationMap.getKeyAt(selectId);
+            String selectKey = extraAnimations.get(selectId).key();
             if (SPEC_RETURN.equals(selectKey)) {
                 // 如果是 #return，那么就是自定义的返回按钮
                 this.clickReturn();
@@ -524,11 +524,11 @@ public class AnimationRouletteScreen extends Screen {
                 // 否则执行默认行为
                 this.clickDefault(selectKey);
             }
-        } else if (-1 < hoverConfigId && hoverConfigId < extraAnimationMap.size()) {
+        } else if (-1 < hoverConfigId && hoverConfigId < extraAnimations.size()) {
             // 点击配置按钮
             this.getMinecraft().getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
             // 以防万一，再检查一次
-            String selectValue = extraAnimationMap.getValueAt(hoverConfigId);
+            String selectValue = extraAnimations.get(hoverConfigId).value_();
             if (selectValue.startsWith(SPEC_PREFIX)) {
                 selectValue = selectValue.substring(SPEC_PREFIX.length());
                 if (this.buttonMap.containsKey(selectValue)) {
@@ -606,8 +606,7 @@ public class AnimationRouletteScreen extends Screen {
             return;
         }
         String key = selectKey.substring(SPEC_PREFIX.length());
-        FifoHashMap<String, String> map = classifyMap.get(key);
-        if (map != null) {
+        if (classifyMap.containsKey(key)) {
             CACHE.addLast(MutablePair.of(key, 0));
             AnimationRouletteScreen screen = new AnimationRouletteScreen(this.buttonMap, this.classifyMap, this.model, this.animatableEntity);
             this.getMinecraft().setScreen(screen);
@@ -637,16 +636,17 @@ public class AnimationRouletteScreen extends Screen {
 
     private void drawRouletteText(GuiGraphics graphics) {
         float startDeg = Mth.PI / MAX_ROULETTE_COUNT;
-        int remainSize = extraAnimationMap.size() - current.getRight() * MAX_ROULETTE_COUNT;
+        int remainSize = extraAnimations.size() - current.getRight() * MAX_ROULETTE_COUNT;
         int radius = 65;
 
         for (int i = 0; i < Math.min(MAX_ROULETTE_COUNT, remainSize); i++) {
             int index = i + current.getRight() * 8;
             int xPos = (int) (x + radius * Mth.cos(startDeg));
             int yPos = (int) (y + radius * Mth.sin(startDeg) - font.lineHeight / 2f);
-            String animationValue = extraAnimationMap.getValueAt(index);
+            var animation = extraAnimations.get(index);
+            String animationValue = animation.value_();
 
-            boolean isClassify = extraAnimationMap.getKeyAt(index).startsWith(SPEC_PREFIX);
+            boolean isClassify = animation.key().startsWith(SPEC_PREFIX);
             boolean hasConfig = animationValue.startsWith(SPEC_PREFIX);
 
             // 如果含有配置
@@ -654,7 +654,7 @@ public class AnimationRouletteScreen extends Screen {
                 String configValue = animationValue.substring(SPEC_PREFIX.length());
                 if (buttonMap.containsKey(configValue)) {
                     ExtraAnimationButton button = buttonMap.get(configValue);
-                    animationValue = button.getName();
+                    animationValue = button.name();
 
                     int configR = 35;
                     int configIconX = (int) (x + configR * Mth.cos(startDeg));
@@ -665,11 +665,13 @@ public class AnimationRouletteScreen extends Screen {
 
             // 绘制文本
             if (StringUtils.isNoneBlank(animationValue)) {
-                String key = LanguageManager.getI18n(this.model, "properties.extra_animation.%s".formatted(extraAnimationMap.getKeyAt(index)), animationValue);
+                String key = LanguageManager.getI18n(this.model,
+                        "properties.extra_animation.%s".formatted(animation.key()), animationValue);
                 MutableComponent name = Component.literal(key);
                 this.drawAnimationName(graphics, name, xPos, yPos, isClassify);
             } else {
-                String key = LanguageManager.getI18n(this.model, "properties.extra_animation.%s".formatted(extraAnimationMap.getKeyAt(index)), String.valueOf(index));
+                String key = LanguageManager.getI18n(this.model,
+                        "properties.extra_animation.%s".formatted(animation.key()), String.valueOf(index));
                 MutableComponent name = Component.literal(key);
                 graphics.drawCenteredString(font, name, xPos, yPos - 8, 0xF3EFE0);
             }
@@ -716,8 +718,8 @@ public class AnimationRouletteScreen extends Screen {
     }
 
     private void drawRouletteBg(PoseStack pPoseStack, int mouseX, int mouseY) {
-        // extraAnimationMap 可能为空
-        if (this.extraAnimationMap.isEmpty()) {
+        // extraAnimations 可能为空
+        if (this.extraAnimations.isEmpty()) {
             return;
         }
 
@@ -738,12 +740,12 @@ public class AnimationRouletteScreen extends Screen {
         boolean isSelected = false;
         boolean isConfigSelected = false;
 
-        for (int i = 0; i < Math.min(8, extraAnimationMap.size() - current.getRight() * 8); i++) {
+        for (int i = 0; i < Math.min(8, extraAnimations.size() - current.getRight() * 8); i++) {
             float spacingDeg = Mth.PI / 90;
             float startDeg = (2 * Mth.PI / count) * i + spacingDeg;
             float endDeg = (2 * Mth.PI / count) * (i + 1) - spacingDeg;
             int index = i + current.getRight() * 8;
-            boolean hasConfig = extraAnimationMap.getValueAt(index).startsWith(SPEC_PREFIX);
+            boolean hasConfig = extraAnimations.get(index).value_().startsWith(SPEC_PREFIX);
 
             isSelected = onDrawFan(startDeg, theta, endDeg, distance, isSelected, hasConfig, i, bufferbuilder, pMatrix);
 
@@ -775,7 +777,7 @@ public class AnimationRouletteScreen extends Screen {
             isSelected = true;
             this.selectId = i + current.getRight() * 8;
         }
-        if (hovered && i < extraAnimationMap.size()) {
+        if (hovered && i < extraAnimations.size()) {
             if (hasConfig) {
                 drawFan(bufferbuilder, pMatrix, 50, 115, startDeg, endDeg, 0xf0FFB100);
                 drawFan(bufferbuilder, pMatrix, 25, 50, startDeg, endDeg, 0x90000000);

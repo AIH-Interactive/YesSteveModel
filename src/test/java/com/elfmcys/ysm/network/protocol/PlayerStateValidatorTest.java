@@ -1,7 +1,18 @@
 package com.elfmcys.ysm.network.protocol;
 
-import com.elfmcys.ysm.proto.network.protocol.v0.CommonV0;
-import com.elfmcys.ysm.proto.network.protocol.v0.PlayerStateV0;
+import com.elfmcys.ysm.proto.network.AnimationState;
+import com.elfmcys.ysm.proto.network.EffectState;
+import com.elfmcys.ysm.proto.network.EffectStateSet;
+import com.elfmcys.ysm.proto.network.EntityRef;
+import com.elfmcys.ysm.proto.network.GameplayState;
+import com.elfmcys.ysm.proto.network.ModelReference;
+import com.elfmcys.ysm.proto.network.ModelSelectionState;
+import com.elfmcys.ysm.proto.network.MolangVariable;
+import com.elfmcys.ysm.proto.network.PlayerStateReport;
+import com.elfmcys.ysm.proto.network.PlayerStateUpdate;
+import com.elfmcys.ysm.proto.network.RoamingState;
+import com.elfmcys.ysm.proto.network.StateWriteMode;
+import java.nio.ByteBuffer;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -11,11 +22,14 @@ class PlayerStateValidatorTest {
     @Test
     void acceptsBoundedFullReport() {
         var report = baseReport()
-                .setGameplay(PlayerStateV0.GameplayState.newInstance()
-                        .setHealth(20).setMaxHealth(20).setFoodLevel(20))
-                .setAnimation(PlayerStateV0.AnimationState.newInstance().setStopped(true))
-                .setRoaming(PlayerStateV0.RoamingState.newInstance().setModelKey(0).addVariables(
-                        CommonV0.MolangVariable.newInstance().setName("speed").setValue(1.0f)));
+                .setGameplay(GameplayState.newBuilder()
+                        .setHealth(20).setMaxHealth(20).setFoodLevel(20).build())
+                .setAnimation(AnimationState.newBuilder()
+                        .setStopped(true).build())
+                .setRoaming(RoamingState.newBuilder().setModelKey(0)
+                        .addVariables(MolangVariable.newBuilder()
+                                .setName("speed").setValue(1.0f).build()).build())
+                .build();
 
         assertTrue(PlayerStateValidator.validReport(report));
     }
@@ -23,39 +37,48 @@ class PlayerStateValidatorTest {
     @Test
     void rejectsUnboundedOrSemanticallyInvalidValues() {
         assertFalse(PlayerStateValidator.validReport(baseReport().setGameplay(
-                PlayerStateV0.GameplayState.newInstance().setHealth(21).setMaxHealth(20))));
+                GameplayState.newBuilder()
+                        .setHealth(21).setMaxHealth(20).build()).build()));
         assertFalse(PlayerStateValidator.validReport(baseReport().setAnimation(
-                PlayerStateV0.AnimationState.newInstance().setAnimationId(" "))));
+                AnimationState.newBuilder()
+                        .setAnimationId(" ").build()).build()));
         assertFalse(PlayerStateValidator.validReport(baseReport().setRoaming(
-                PlayerStateV0.RoamingState.newInstance().setModelKey(0).addVariables(
-                        CommonV0.MolangVariable.newInstance().setName("value").setValue(Float.NaN)))));
+                RoamingState.newBuilder().setModelKey(0).addVariables(
+                        MolangVariable.newBuilder()
+                                .setName("value").setValue(Float.NaN).build()).build()).build()));
 
-        var effects = PlayerStateV0.EffectStateSet.newInstance()
-                .addEffects(PlayerStateV0.EffectState.newInstance().setEffectId("minecraft:speed").setLevel(1))
-                .addEffects(PlayerStateV0.EffectState.newInstance().setEffectId("minecraft:speed").setLevel(2));
-        assertFalse(PlayerStateValidator.validReport(baseReport().setEffects(effects)));
+        var effects = EffectStateSet.newBuilder()
+                .addEffects(EffectState.newBuilder()
+                        .setEffectId("minecraft:speed").setLevel(1).build())
+                .addEffects(EffectState.newBuilder()
+                        .setEffectId("minecraft:speed").setLevel(2).build())
+                .build();
+        assertFalse(PlayerStateValidator.validReport(baseReport().setEffects(effects).build()));
     }
 
     @Test
     void fullUpdateRequiresModelAndNeverAcceptsPlayerIdFromWire() {
-        var update = PlayerStateV0.PlayerStateUpdate.newInstance()
-                .setRevision(1)
-                .setMode(CommonV0.StateWriteMode.STATE_WRITE_MODE_FULL)
-                .setSubject(CommonV0.EntityRef.newInstance().setEntityId(1));
-        assertFalse(PlayerStateValidator.validUpdate(update));
+        var update = PlayerStateUpdate.newBuilder()
+                .setMode(StateWriteMode.STATE_WRITE_MODE_FULL)
+                .setSubject(EntityRef.newBuilder()
+                        .setEntityId(1).build());
+        assertFalse(PlayerStateValidator.validUpdate(update.build()));
 
-        update.setModel(PlayerStateV0.ModelSelectionState.newInstance()
-                .setModel(CommonV0.ModelReference.newInstance().setBuiltinDefault(true))
-                .setTextureId("").setDisabled(false));
-        assertTrue(PlayerStateValidator.validUpdate(update));
-        update.getMutableSubject().setPlayerId(new byte[PlayerId.SIZE]);
-        assertFalse(PlayerStateValidator.validUpdate(update));
+        update.setModel(ModelSelectionState.newBuilder()
+                .setModel(ModelReference.newBuilder()
+                        .setBuiltinDefault(true).build())
+                .setTextureId("").setDisabled(false).build());
+        var valid = update.build();
+        assertTrue(PlayerStateValidator.validUpdate(valid));
+        var playerSubject = valid.subject().withPlayerId(
+                ByteBuffer.wrap(new byte[PlayerId.SIZE]));
+        assertFalse(PlayerStateValidator.validUpdate(valid.withSubject(playerSubject)));
     }
 
-    private static PlayerStateV0.PlayerStateReport baseReport() {
-        return PlayerStateV0.PlayerStateReport.newInstance()
-                .setSequence(1)
-                .setSubject(CommonV0.EntityRef.newInstance().setEntityId(1))
-                .setMode(CommonV0.StateWriteMode.STATE_WRITE_MODE_FULL);
+    private static PlayerStateReport.Builder baseReport() {
+        return PlayerStateReport.newBuilder()
+                .setSubject(EntityRef.newBuilder()
+                        .setEntityId(1).build())
+                .setMode(StateWriteMode.STATE_WRITE_MODE_FULL);
     }
 }

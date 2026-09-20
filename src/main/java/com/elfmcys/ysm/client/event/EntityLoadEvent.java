@@ -1,13 +1,15 @@
 package com.elfmcys.ysm.client.event;
 
 import com.elfmcys.ysm.YesSteveModel;
+import com.elfmcys.ysm.capability.PlayerAnimatableCapabilityProvider;
+import com.elfmcys.ysm.capability.ProjectileAnimatableCapabilityProvider;
+import com.elfmcys.ysm.capability.VehicleAnimatableCapabilityProvider;
+import com.elfmcys.ysm.client.compat.touhoulittlemaid.client.TlmClientCompat;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
-import com.elfmcys.ysm.network.forge.ClientProtocolGateway;
-import com.elfmcys.ysm.network.forge.PlayerStateHandler;
 import net.minecraftforge.event.entity.EntityLeaveLevelEvent;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.event.entity.EntityJoinLevelEvent;
@@ -28,9 +30,6 @@ public class EntityLoadEvent {
         if (!YesSteveModel.isAvailable()) {
             return;
         }
-        if (event.getEntity() instanceof Player player) {
-            ClientProtocolGateway.observePlayer(player.getId(), player.getUUID());
-        }
         var list = CACHE.getIfPresent(event.getEntity().getId());
         if (list != null) {
             for (var consumer : list) {
@@ -42,9 +41,17 @@ public class EntityLoadEvent {
 
     @SubscribeEvent
     public static void onEntityLeaveWorld(final EntityLeaveLevelEvent event) {
-        ClientProtocolGateway.removeEntity(event.getEntity().getId());
-        PlayerStateHandler.removeClientEntity(event.getEntity().getId());
-        CACHE.invalidate(event.getEntity().getId());
+        var entity = event.getEntity();
+        if (entity instanceof Player) {
+            entity.getCapability(PlayerAnimatableCapabilityProvider.CAP)
+                    .ifPresent(capability -> capability.reset());
+        }
+        entity.getCapability(ProjectileAnimatableCapabilityProvider.CAP)
+                .ifPresent(capability -> capability.reset());
+        entity.getCapability(VehicleAnimatableCapabilityProvider.CAP)
+                .ifPresent(capability -> capability.reset());
+        TlmClientCompat.releaseAnimatable(entity);
+        CACHE.invalidate(entity.getId());
     }
 
     public static void executeOnEntity(int entityId, Consumer<Entity> consumer) {

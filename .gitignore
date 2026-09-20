@@ -28,6 +28,7 @@ eclipse
 /logs
 __pycache__
 /.codegraph
+/.gitnexus/
 
 # Files from Forge MDK
 forge*changelog.txt

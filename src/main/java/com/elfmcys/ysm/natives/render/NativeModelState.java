@@ -8,6 +8,7 @@ import com.elfmcys.ysm.util.ExposedShortArrayList;
 import it.unimi.dsi.fastutil.shorts.ShortList;
 import org.lwjgl.system.MemoryUtil;
 
+import java.lang.ref.Reference;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.ShortBuffer;
@@ -60,8 +61,15 @@ public final class NativeModelState extends NativeObject {
         }
 
         invalidate();
-        if (!nExtract(get(), bakedModel.get(), boneAttributes,
-                locatorBoneIndices.getUnderlyingArray(), extractOutput)) {
+        final boolean success;
+        try {
+            success = nExtract(get(), bakedModel.get(), boneAttributes,
+                    locatorBoneIndices.getUnderlyingArray(), extractOutput);
+        } finally {
+            Reference.reachabilityFence(this);
+            Reference.reachabilityFence(bakedModel);
+        }
+        if (!success) {
             return false;
         }
 
@@ -116,7 +124,13 @@ public final class NativeModelState extends NativeObject {
         var requiredSize = checkedArraySize(renderBoneIndices.capacity(),
                 BONE_INFO_INT_COUNT, 0);
         var data = getIntBuffer(BONE_INFO_BUFFER, requiredSize);
-        if (!nCalculateRenderBoneInfo(get(), data)) {
+        final boolean success;
+        try {
+            success = nCalculateRenderBoneInfo(get(), data);
+        } finally {
+            Reference.reachabilityFence(this);
+        }
+        if (!success) {
             throw new RuntimeException("Failed to get ModelState bone info");
         }
         return new BoneInfoView(data, renderBoneIndices.capacity());
@@ -128,7 +142,12 @@ public final class NativeModelState extends NativeObject {
         var headerIntCount = checkedArraySize(renderBoneIndices.capacity(),
                 CUBE_INFO_HEADER_INT_COUNT, 0) + 1;
         var data = CUBE_INFO_BUFFER.get();
-        var result = nCalculateRenderCubeInfo(get(), data);
+        final int[] result;
+        try {
+            result = nCalculateRenderCubeInfo(get(), data);
+        } finally {
+            Reference.reachabilityFence(this);
+        }
         if (result == null) {
             throw new RuntimeException("Failed to get ModelState cube info");
         }

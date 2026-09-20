@@ -30,15 +30,7 @@ final class RawImageCompressor {
         }
 
         try (var pixels = codec.decode(original)) {
-            var compressed = codec.encode(pixels, original.width(), original.height(), policy);
-            if (compressed.data().size() >= original.data().size()) {
-                YesSteveModel.LOGGER.debug(
-                        "Keeping original image {} because recompression did not reduce its size ({} >= {})",
-                        path, compressed.data().size(), original.data().size());
-                compressed.close();
-                return original.share();
-            }
-            return compressed;
+            return codec.encode(pixels, original.width(), original.height(), policy);
         } catch (IOException error) {
             YesSteveModel.LOGGER.warn("Failed to recompress image {}; keeping the original", path, error);
             return original.share();
@@ -52,10 +44,7 @@ final class RawImageCompressor {
 
     record Policy(Mode mode, int maxWidth, int maxHeight) {
         boolean supports(Image.Format format) {
-            return switch (mode) {
-                case LOSSLESS -> format == Image.Format.PNG;
-                case LOSSY -> format == Image.Format.PNG || format == Image.Format.JPEG;
-            };
+            return format == Image.Format.PNG;
         }
     }
 

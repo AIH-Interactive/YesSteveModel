@@ -9,6 +9,6 @@ import "manifest/info/info.proto";
 
 message Manifest {
   repeated asset.RenderTarget render_targets = 1;
-  asset.Common common_behavior = 2;
+  asset.Common common_assets = 2;
   info.Info info = 3;
 }

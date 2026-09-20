@@ -78,6 +78,21 @@ public final class GeoModelState implements Closeable {
         return nativeState;
     }
 
+    public void visitLocatorGroupOrDefault(GeoLocator locator, PoseStack poseStack,
+                                           Consumer<PoseStack> visitor, Consumer<PoseStack> applyDefaultPose) {
+        if (locatorGroupSize(locator) > 0) {
+            visitLocatorGroup(locator, poseStack, visitor);
+        } else {
+            poseStack.pushPose();
+            try {
+                applyDefaultPose.accept(poseStack);
+                visitor.accept(poseStack);
+            } finally {
+                poseStack.popPose();
+            }
+        }
+    }
+
     public void visitLocatorGroup(GeoLocator locator, PoseStack poseStack,
                                   Consumer<PoseStack> visitor) {
         if (model.locatorType() != locator.type()) {
@@ -89,12 +104,13 @@ public final class GeoModelState implements Closeable {
         var bonePose = new Matrix4f();
         var boneNormal = new Matrix3f();
         var bonePoseView = nativeState.getBonePoses();
+        var last = poseStack.last();
+
         try {
             for (var boneIndexShort : activeLocatorMap.get(Byte.toUnsignedInt(locator.seq()) - 1)) {
                 var boneIndex = Short.toUnsignedInt(boneIndexShort);
                 var bone = model.sortedBones().get(boneIndex);
 
-                var last = poseStack.last();
                 bonePoseView.getPose(boneIndex, bonePose);
                 bonePoseView.getNormal(boneIndex, boneNormal);
                 backupPose.mulAffine(bonePose, last.pose());
@@ -106,7 +122,6 @@ public final class GeoModelState implements Closeable {
                 visitor.accept(poseStack);
             }
         } finally {
-            var last = poseStack.last();
             last.pose().set(backupPose);
             last.normal().set(backupNormal);
         }

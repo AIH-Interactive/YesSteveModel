@@ -25,9 +25,8 @@ public final class ProtocolMessageRegistry {
         return Optional.ofNullable(byId.get(id));
     }
 
-    @SuppressWarnings("unchecked")
-    public <T> Optional<ProtocolMessageSpec<T>> find(Class<T> type) {
-        return Optional.ofNullable((ProtocolMessageSpec<T>) byType.get(type));
+    public Optional<ProtocolMessageSpec<?>> find(Class<?> type) {
+        return Optional.ofNullable(byType.get(type));
     }
 
     public Collection<ProtocolMessageSpec<?>> messages() {

@@ -6,6 +6,6 @@ package mixel.manifest.asset;
 import "common/sound.proto";
 
 message Common {
-  repeated mixel.common.Sound sounds = 1;
+  repeated common.Sound sounds = 1;
   uint32 strings_blob_id = 2;
 }

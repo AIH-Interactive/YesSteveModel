@@ -7,14 +7,11 @@
 package com.elfmcys.ysm.geckolib3.util;
 
 
-import com.elfmcys.ysm.util.Keep;
-
 public interface IRenderCycle {
     /**
      * IRenderCycle 名称
      *
      * @return 名称
      */
-    @Keep
     String name();
 }

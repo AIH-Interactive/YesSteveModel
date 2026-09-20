@@ -2,7 +2,6 @@ package com.elfmcys.ysm.mixin.plugin;
 
 import com.elfmcys.ysm.client.compat.create.CreateCompat;
 import com.elfmcys.ysm.client.compat.parcool.ParCoolCompat;
-import com.elfmcys.ysm.util.Keep;
 import com.google.common.collect.Lists;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.fml.loading.FMLEnvironment;
@@ -19,29 +18,24 @@ public class MixinTweaker implements IMixinConfigPlugin {
         CreateCompat.init();
     }
 
-    @Keep
     @Override
     public void onLoad(String mixinPackage) {
     }
 
-    @Keep
     @Override
     public String getRefMapperConfig() {
         return null;
     }
 
-    @Keep
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
         return true;
     }
 
-    @Keep
     @Override
     public void acceptTargets(Set<String> myTargets, Set<String> otherTargets) {
     }
 
-    @Keep
     @Override
     public List<String> getMixins() {
         if (FMLEnvironment.dist == Dist.CLIENT) {
@@ -70,12 +64,10 @@ public class MixinTweaker implements IMixinConfigPlugin {
         return null;
     }
 
-    @Keep
     @Override
     public void preApply(String targetClassName, ClassNode targetClass, String mixinClassName, IMixinInfo mixinInfo) {
     }
 
-    @Keep
     @Override
     public void postApply(String targetClassName, ClassNode targetClass, String mixinClassName, IMixinInfo mixinInfo) {
     }

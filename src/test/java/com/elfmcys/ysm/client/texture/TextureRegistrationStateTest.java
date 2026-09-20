@@ -18,10 +18,10 @@ class TextureRegistrationStateTest {
         var replacement = state.activate(1);
 
         assertSame(id, state.id());
-        assertTrue(replacement.ready());
+        assertTrue(replacement.registered());
         assertEquals(TextureRegistrationState.ReleaseResult.IGNORED, state.release(old.token()));
         assertTrue(state.tickRemoval().isEmpty());
-        assertTrue(state.isReady(replacement.token()));
+        assertTrue(state.isActive(replacement.token()));
     }
 
     @Test
@@ -39,11 +39,9 @@ class TextureRegistrationStateTest {
     }
 
     @Test
-    void stalePendingRegistrationAndRemovalCannotAffectReplacement() {
+    void staleRemovalCannotAffectReplacement() {
         var state = new TextureRegistrationState<>(new Object());
-        var pendingRegistration = state.activate(0);
         var registered = state.activate(0);
-        assertFalse(state.needsRegistration(pendingRegistration.token()));
         assertTrue(state.markRegistered(registered.token()));
 
         assertEquals(TextureRegistrationState.ReleaseResult.DELAYED, state.release(registered.token()));
@@ -51,7 +49,7 @@ class TextureRegistrationStateTest {
         var replacement = state.activate(0);
 
         assertFalse(state.shouldRelease(pendingRemoval));
-        assertTrue(replacement.ready());
-        assertTrue(state.isReady(replacement.token()));
+        assertTrue(replacement.registered());
+        assertTrue(state.isActive(replacement.token()));
     }
 }

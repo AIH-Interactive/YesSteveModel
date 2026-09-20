@@ -10,6 +10,10 @@ YSM 当前使用 native CPU renderer，将静态模型处理、逐帧状态更�
 - 以同一几何语义适配 Vanilla、Iris 和通用 `VertexConsumer` fallback，优化不能牺牲可见面、UV、法线、切线或透明层次的正确性；
 - 保持三阶段语义稳定，同时允许 CPU 数据布局和执行策略继续替换。
 
+## 本地呈现边界
+
+本机的模型与第一人称手臂屏蔽、恢复原版表现及音效调节由 [DD.local-player-controls-presentation](../product-decisions/decisions/local-presentation-control.md#ddlocal-player-controls-presentation) 定义。本页渲染管线说明适用于启用 YSM 替换的绘制；产品控制契约不表示具体开关已完成实现或验证。
+
 ## 三阶段管线
 
 ```mermaid

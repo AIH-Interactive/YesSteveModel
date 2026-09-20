@@ -8,6 +8,9 @@ import java.util.List;
 public class ServerConfig {
     public static ForgeConfigSpec.IntValue THREAD_COUNT;
     public static ForgeConfigSpec.IntValue BANDWIDTH_LIMIT;
+    public static ForgeConfigSpec.IntValue DISPATCH_SOFT_LIMIT;
+    public static ForgeConfigSpec.IntValue DISPATCH_HARD_LIMIT;
+    public static ForgeConfigSpec.BooleanValue RESTRICTED_AUTH;
     public static ForgeConfigSpec.BooleanValue LOW_BANDWIDTH_USAGE;
     public static ForgeConfigSpec.BooleanValue CAN_SWITCH_MODEL;
     public static ForgeConfigSpec.ConfigValue<String> DEFAULT_MODEL_PATH;
@@ -41,8 +44,17 @@ public class ServerConfig {
         builder.comment("Concurrent level for processing models. Value 0 means AUTO.");
         THREAD_COUNT = builder.defineInRange("ThreadCount", 0, 0, Math.max(2, Runtime.getRuntime().availableProcessors() - 1));
 
-        builder.comment("Bandwidth limitation during distributing models to players.(In Mbps)");
-        BANDWIDTH_LIMIT = builder.defineInRange("BandwidthLimit", 5, 1, 999);
+        builder.comment("Global model distribution limit in Mbps. 0 means unlimited.");
+        BANDWIDTH_LIMIT = builder.defineInRange("BandwidthLimit", 5, 0, 999);
+
+        builder.comment("Per-player queue size that enables one-fragment round-robin visits.");
+        DISPATCH_SOFT_LIMIT = builder.defineInRange("DispatchSoftLimit", 24, 1, 255);
+
+        builder.comment("Atomic per-player logical-packet admission cap.");
+        DISPATCH_HARD_LIMIT = builder.defineInRange("DispatchHardLimit", 48, 2, 256);
+
+        builder.comment("Restrict unauthorized auth-model icon and chunk downloads.");
+        RESTRICTED_AUTH = builder.define("RestrictedAuth", false);
 
         builder.comment("Suppress network synchronization of partial features to reduce bandwidth usage");
         builder.comment("Only effective when there are tons of players");

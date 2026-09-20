@@ -1,7 +1,7 @@
 package com.elfmcys.ysm.client.lang;
 
-import com.elfmcys.ysm.client.model.ModelPackInfo;
-import com.elfmcys.ysm.client.model.ModelRenderTarget;
+import com.elfmcys.ysm.model.catalog.client.ModelPackInfo;
+import com.elfmcys.ysm.model.resource.client.ModelRenderTarget;
 import net.minecraft.client.Minecraft;
 import org.jetbrains.annotations.Nullable;
 
@@ -37,17 +37,7 @@ public class LanguageManager {
     }
 
     public static String getI18n(ModelRenderTarget data, String local, String key, String defaultValue) {
-        Map<String, Map<String, String>> languages = data.assets().languageFiles();
-        if (languages.isEmpty()) {
-            return defaultValue;
-        }
-        if (languages.containsKey(local)) {
-            return languages.get(local).getOrDefault(key, defaultValue);
-        } else if (languages.containsKey(DEFAULT_LANGUAGE_CODE)) {
-            return languages.get(DEFAULT_LANGUAGE_CODE).getOrDefault(key, defaultValue);
-        } else {
-            return defaultValue;
-        }
+        return data.info().translateOr(key, local, defaultValue);
     }
 
 }

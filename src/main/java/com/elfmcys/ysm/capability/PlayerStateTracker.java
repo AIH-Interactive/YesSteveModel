@@ -1,10 +1,11 @@
 package com.elfmcys.ysm.capability;
 
 import com.elfmcys.ysm.client.entity.HumanoidStateTracker;
-import com.elfmcys.ysm.proto.network.protocol.v0.PlayerStateV0;
+import com.elfmcys.ysm.proto.network.EffectStateSet;
+import com.elfmcys.ysm.proto.network.GameplayState;
+import it.unimi.dsi.fastutil.objects.Object2ByteOpenHashMap;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
-import it.unimi.dsi.fastutil.objects.Object2ByteOpenHashMap;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.entity.player.Player;
 
@@ -52,27 +53,29 @@ public class PlayerStateTracker extends HumanoidStateTracker<Player> {
         inShieldBlockCooldown = false;
     }
 
-    public void updateProtocolState(PlayerStateV0.GameplayState gameplay,
-                                    PlayerStateV0.EffectStateSet effectState, boolean full) {
+    public void updateProtocolState(GameplayState gameplay,
+                                    EffectStateSet effectState, boolean full) {
         if (gameplay != null) {
-            if (gameplay.hasFlying()) remoteFlying = gameplay.getFlying();
-            if (gameplay.hasExperienceLevel()) expLevel = gameplay.getExperienceLevel();
-            if (gameplay.hasFoodLevel()) foodLevel = gameplay.getFoodLevel();
-            if (gameplay.hasHealth()) health = gameplay.getHealth();
-            if (gameplay.hasMaxHealth()) maxHealth = gameplay.getMaxHealth();
-            if (gameplay.hasMoveXQ7()) xxa = gameplay.getMoveXQ7() / 127f;
-            if (gameplay.hasMoveYQ7()) yya = gameplay.getMoveYQ7() / 127f;
-            if (gameplay.hasMoveZQ7()) zza = gameplay.getMoveZQ7() / 127f;
-            if (gameplay.hasShieldCooldown()) inShieldBlockCooldown = gameplay.getShieldCooldown();
+            if (gameplay.hasFlying()) remoteFlying = gameplay.flying().orElseThrow();
+            if (gameplay.hasExperienceLevel()) expLevel = gameplay.experienceLevel().orElseThrow();
+            if (gameplay.hasFoodLevel()) foodLevel = gameplay.foodLevel().orElseThrow();
+            if (gameplay.hasHealth()) health = gameplay.health().orElseThrow();
+            if (gameplay.hasMaxHealth()) maxHealth = gameplay.maxHealth().orElseThrow();
+            if (gameplay.hasMoveXQ7()) xxa = gameplay.moveXQ7().orElseThrow() / 127f;
+            if (gameplay.hasMoveYQ7()) yya = gameplay.moveYQ7().orElseThrow() / 127f;
+            if (gameplay.hasMoveZQ7()) zza = gameplay.moveZQ7().orElseThrow() / 127f;
+            if (gameplay.hasShieldCooldown()) {
+                inShieldBlockCooldown = gameplay.shieldCooldown().orElseThrow();
+            }
         }
         if (effectState != null) {
             if (full) effects.clear();
-            for (var value : effectState.getEffects()) {
-                var key = ResourceLocation.tryParse(value.getEffectId());
+            for (var value : effectState.effects()) {
+                var key = ResourceLocation.tryParse(value.effectId());
                 var effect = key == null ? null : BuiltInRegistries.MOB_EFFECT.get(key);
                 if (effect != null) {
-                    if (value.getLevel() == 0) effects.removeByte(effect);
-                    else effects.put(effect, (byte) value.getLevel());
+                    if (value.level() == 0) effects.removeByte(effect);
+                    else effects.put(effect, (byte) value.level());
                 }
             }
         }

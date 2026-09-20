@@ -6,12 +6,11 @@ import com.elfmcys.ysm.client.event.RegisterEntityRenderersEvent;
 import com.elfmcys.ysm.client.gui.button.CatalogTextureButton;
 import com.elfmcys.ysm.client.gui.button.FlatColorButton;
 import com.elfmcys.ysm.client.gui.button.FlatIconButton;
-import com.elfmcys.ysm.client.model.ModelRenderTarget;
-import com.elfmcys.ysm.client.model.ClientModelService;
+import com.elfmcys.ysm.model.resource.client.ModelRenderTarget;
+import com.elfmcys.ysm.model.service.ClientModelService;
 import com.elfmcys.ysm.model.domain.Hash256;
 import com.elfmcys.ysm.network.NetworkHandler;
 import com.elfmcys.ysm.network.forge.ClientProtocolGateway;
-import com.elfmcys.ysm.task.TaskScope;
 import com.elfmcys.ysm.util.RenderUtil;
 import com.google.common.collect.Lists;
 import com.mojang.blaze3d.platform.Window;
@@ -48,7 +47,6 @@ public class PlayerTextureScreen extends Screen {
     private final List<String> textures;
     private final List<String> animations;
     private final List<CatalogTextureButton> textureButtons = new ArrayList<>();
-    private TaskScope pageScope;
     private String selectedTexture;
     private String animation = "";
     private int maxTexturePage;
@@ -78,7 +76,7 @@ public class PlayerTextureScreen extends Screen {
         var entry = ClientModelService.instance().catalog().find(modelHash)
                 .orElseThrow(() -> new IllegalArgumentException("Unknown model hash: " + modelHash));
         this.modelPath = entry.displayPath();
-        this.textures = entry.displayDescriptor().view().getPlayer().getTextureNames().stream()
+        this.textures = entry.displayRepresentation().view().getPlayer().getTextureNames().stream()
                 .sorted().toList();
         this.selectedTexture = model.playerResources().defaultTextureName();
         this.animations = new ArrayList<>(model.playerResources().animations().keySet());
@@ -92,7 +90,6 @@ public class PlayerTextureScreen extends Screen {
     protected void init() {
         closePage();
         clearWidgets();
-        pageScope = ClientModelService.instance().openRequestScope();
         x = (width - 420) / 2;
         y = (height - 235) / 2;
         maxTexturePage = Math.max(0, (textures.size() - 1) / 4);
@@ -175,7 +172,7 @@ public class PlayerTextureScreen extends Screen {
             }
             var button = new CatalogTextureButton(x + 306 + 56 * (slot % 2),
                     y + 5 + 104 * (slot / 2), modelHash, modelPath, textures.get(index),
-                    pageScope, TEXTURE_BUTTON_ENTITY[slot], this::selectTexture);
+                    TEXTURE_BUTTON_ENTITY[slot], this::selectTexture);
             textureButtons.add(button);
             addRenderableWidget(button);
         }
@@ -293,10 +290,6 @@ public class PlayerTextureScreen extends Screen {
 
     private void closePage() {
         closeTextureButtons();
-        if (pageScope != null) {
-            pageScope.close();
-            pageScope = null;
-        }
     }
 
     private int page(int current, int maximum, double delta) {

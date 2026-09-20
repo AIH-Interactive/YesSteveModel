@@ -2,9 +2,9 @@ package com.elfmcys.ysm.geckolib3.geo;
 
 import com.elfmcys.ysm.YesSteveModel;
 import com.elfmcys.ysm.accessor.ILivingRenderer;
+import com.elfmcys.ysm.api.rendering.v0.TargetKind;
 import com.elfmcys.ysm.api.rendering.v0.event.RenderLayerEvent;
 import com.elfmcys.ysm.api.rendering.v0.event.RenderModelEvent;
-import com.elfmcys.ysm.api.rendering.v0.TargetKind;
 import com.elfmcys.ysm.capability.VehicleAnimatableCapabilityProvider;
 import com.elfmcys.ysm.client.entity.CustomHumanoidEntity;
 import com.elfmcys.ysm.geckolib3.core.util.Color;
@@ -12,6 +12,8 @@ import com.elfmcys.ysm.geckolib3.util.EModelRenderCycle;
 import com.elfmcys.ysm.mixin.client.LivingEntityAccessor;
 import com.mojang.blaze3d.vertex.PoseStack;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import java.util.List;
+import java.util.Optional;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.PlayerModel;
 import net.minecraft.client.model.geom.ModelLayers;
@@ -26,12 +28,11 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraftforge.client.event.RenderLivingEvent;
+import net.minecraftforge.common.MinecraftForge;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Quaternionf;
-
-import java.util.List;
-import java.util.Optional;
 
 public abstract class GeoReplacedEntityRenderer<TEntity extends LivingEntity, T extends CustomHumanoidEntity<TEntity>> extends LivingEntityRenderer<TEntity, PlayerModel<TEntity>> implements IGeoRenderer<T> {
     protected final List<GeoLayerRenderer<T>> layerRenderers = new ObjectArrayList<>();
@@ -51,7 +52,7 @@ public abstract class GeoReplacedEntityRenderer<TEntity extends LivingEntity, T 
 
     public void renderAnimatableEntity(T animatableEntity, @Nullable ResourceLocation textureOverride, float entityYaw, float partialTick,
                                        PoseStack poseStack, MultiBufferSource bufferSource, int packedLight) {
-        if (net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(new net.minecraftforge.client.event.RenderLivingEvent.Pre<>(animatableEntity.getEntity(), this, partialTick, poseStack, bufferSource, packedLight)))
+        if (MinecraftForge.EVENT_BUS.post(new RenderLivingEvent.Pre<>(animatableEntity.getEntity(), this, partialTick, poseStack, bufferSource, packedLight)))
             return;
         final TEntity entity = animatableEntity.getEntity();
         var mc = Minecraft.getInstance();
@@ -126,7 +127,7 @@ public abstract class GeoReplacedEntityRenderer<TEntity extends LivingEntity, T 
         }
 
         ((ILivingRenderer) this).ysm$renderNameTag(entity, entityYaw, partialTick, poseStack, bufferSource, packedLight);
-        net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(new net.minecraftforge.client.event.RenderLivingEvent.Post<>(entity, this, partialTick, poseStack, bufferSource, packedLight));
+        MinecraftForge.EVENT_BUS.post(new RenderLivingEvent.Post<>(entity, this, partialTick, poseStack, bufferSource, packedLight));
     }
 
     protected void renderLayer(PoseStack poseStack, MultiBufferSource buffer, T animatable, GeoRenderData renderData, int packedLight, int overlay) {

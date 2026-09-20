@@ -5,17 +5,20 @@ import com.elfmcys.ysm.buffer.NativeBuffer;
 import com.elfmcys.ysm.buffer.annotation.Aligned;
 import com.elfmcys.ysm.buffer.annotation.Borrowed;
 import com.elfmcys.ysm.client.compat.IrisCompat;
+import com.elfmcys.ysm.config.ClientConfig;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import org.jetbrains.annotations.Nullable;
 
+import java.lang.ref.Reference;
+
 public class NativeRenderer {
     public static void render(VertexConsumer vertexConsumer, PoseStack.Pose pose,
                               NativeModelState modelState, int vertexCount,
                               int light, int overlay, int color, RenderContextType contextType) {
-        var vb = setupVertexConsumer(vertexConsumer, vertexCount);
+        var vb = probeVertexConsumer(vertexConsumer, vertexCount);
         var isUnknownType = vb.type == VertexFormatType.FALLBACK;
 
         var matBuffer = getMatBuffer(pose);
@@ -32,8 +35,18 @@ public class NativeRenderer {
             bufferFlags = 0;
         }
 
-        var result = nRender(bufferObj, bufferFlags, matBuffer.ptr(), modelState.get(),
-                lightAndOverlay, packColor(color), flags, IrisCompat.getEntityId());
+        final boolean result;
+        try {
+            result = nRender(bufferObj, bufferFlags, matBuffer.ptr(), modelState.get(),
+                    lightAndOverlay, packColor(color), flags, IrisCompat.getEntityId());
+        } finally {
+            Reference.reachabilityFence(vertexConsumer);
+            Reference.reachabilityFence(bufferObj);
+            Reference.reachabilityFence(vb.region);
+            Reference.reachabilityFence(matBuffer);
+            Reference.reachabilityFence(modelState);
+        }
+
         if (result) {
             if (isUnknownType || vb.region == null) {
                 FallbackVertexWriter.write(vertexConsumer, vertexCount, overlay);
@@ -44,18 +57,20 @@ public class NativeRenderer {
     }
 
     @SuppressWarnings("resource")
-    private static VertexBuffer setupVertexConsumer(VertexConsumer vertexConsumer, int vertexCount) {
+    private static VertexBuffer probeVertexConsumer(VertexConsumer vertexConsumer, int vertexCount) {
         if (vertexConsumer instanceof VertexBufferAccessor accessor && accessor.ysm$ok()) {
-            var format = accessor.ysm$vertexFormat();
-            if (format == DefaultVertexFormat.NEW_ENTITY) {
-                return new VertexBuffer(accessor, VertexFormatType.VANILLA, accessor.ysm$reserve(vertexCount));
-            } else {
-                var irisType = IrisCompat.determineVertexFormatType(format);
-                if (irisType.isPresent()) {
-                    return new VertexBuffer(accessor, irisType.get(), accessor.ysm$reserve(vertexCount));
+            if (!ClientConfig.USE_COMPATIBILITY_RENDERER.get()) {
+                var format = accessor.ysm$vertexFormat();
+                if (format == DefaultVertexFormat.NEW_ENTITY) {
+                    return new VertexBuffer(accessor, VertexFormatType.VANILLA, accessor.ysm$reserve(vertexCount));
+                } else {
+                    var irisType = IrisCompat.determineVertexFormatType(format);
+                    if (irisType.isPresent()) {
+                        return new VertexBuffer(accessor, irisType.get(), accessor.ysm$reserve(vertexCount));
+                    }
                 }
-                accessor.ysm$reserve(vertexCount);  // 有必要吗？
             }
+            accessor.ysm$reserve(vertexCount);  // 有必要吗？
         }
         return new VertexBuffer(null, VertexFormatType.FALLBACK, null);
     }

@@ -4,14 +4,13 @@ import com.elfmcys.ysm.YesSteveModel;
 import com.elfmcys.ysm.capability.StarModelsCapabilityProvider;
 import com.elfmcys.ysm.client.event.RegisterEntityRenderersEvent;
 import com.elfmcys.ysm.client.gui.CustomGuiPlayerEntity;
-import com.elfmcys.ysm.client.model.ClientAssetBatch;
-import com.elfmcys.ysm.client.model.ModelRenderTarget;
-import com.elfmcys.ysm.client.model.catalog.CatalogModelMetadata;
-import com.elfmcys.ysm.client.model.catalog.ClientCatalogEntry;
+import com.elfmcys.ysm.model.resource.client.asset.ClientAssetBatch;
+import com.elfmcys.ysm.model.resource.client.ModelRenderTarget;
+import com.elfmcys.ysm.model.catalog.client.entry.CatalogModelMetadata;
+import com.elfmcys.ysm.model.catalog.client.entry.ClientCatalogEntry;
 import com.elfmcys.ysm.client.texture.TextureHolder;
 import com.elfmcys.ysm.config.ClientConfig;
 import com.elfmcys.ysm.model.domain.Hash256;
-import com.elfmcys.ysm.task.TaskContext;
 import com.elfmcys.ysm.util.ModelIdUtil;
 import com.elfmcys.ysm.util.RenderUtil;
 import com.mojang.blaze3d.platform.Window;
@@ -47,7 +46,7 @@ public final class CatalogModelButton extends Button implements AutoCloseable {
     private final CatalogModelCardState state;
 
     public CatalogModelButton(int x, int y, ClientCatalogEntry entry, boolean needAuth,
-                              TaskContext context, ClientAssetBatch assets,
+                              ClientAssetBatch assets,
                               CustomGuiPlayerEntity entity, SelectionHandler selection,
                               RenderTargetHandler openRenderTarget) {
         super(x, y, 52, 90, name(CatalogModelMetadata.from(entry)), ignored -> { }, DEFAULT_NARRATION);
@@ -58,7 +57,7 @@ public final class CatalogModelButton extends Button implements AutoCloseable {
         this.selection = selection;
         this.openRenderTarget = openRenderTarget;
         this.pathName = Component.literal(ModelIdUtil.getFileNameFromPath(metadata.path()));
-        this.state = new CatalogModelCardState(context, assets, entry, metadata, entity);
+        this.state = new CatalogModelCardState(assets, entry, metadata, entity);
     }
 
     public Hash256 modelHash() {
@@ -67,6 +66,10 @@ public final class CatalogModelButton extends Button implements AutoCloseable {
 
     public @Nullable ModelRenderTarget renderTarget() {
         return state.renderTarget();
+    }
+
+    public void updateDemand(long hoverGeneration, boolean bakeEligible) {
+        state.updateDemand(hoverGeneration, bakeEligible);
     }
 
     @Override
@@ -96,12 +99,18 @@ public final class CatalogModelButton extends Button implements AutoCloseable {
         state.updatePreviewAnimations(isHovered(), isFocused(), Util.getMillis());
         var color = needAuth ? 0x7F000000 : 0xFF434242;
         graphics.fillGradient(getX(), getY(), getX() + width, getY() + height, color, color);
-        renderImage(graphics, state.background() != null ? state.background() : state.preview());
-        if (state.renderTarget() != null) {
+        var renderTarget = state.renderTarget();
+        if (renderTarget != null) {
+            renderImage(graphics, state.background());
             renderEntity(graphics);
             renderImage(graphics, state.foreground());
-        } else if (state.preview() == null) {
-            renderLoading(graphics);
+        } else {
+            var preview = state.preview();
+            if (preview != null) {
+                renderImage(graphics, preview);
+            } else {
+                renderLoading(graphics);
+            }
         }
         renderName(graphics);
         renderState(graphics);
@@ -148,17 +157,17 @@ public final class CatalogModelButton extends Button implements AutoCloseable {
         RenderUtil.renderModelInGui(getX() + width / 2f, getY() + height / 2f + 20f, 30f,
                 Minecraft.getInstance().getFrameTime(), entity,
                 RegisterEntityRenderersEvent.getPlayerRenderer(),
-                metadata.info().properties().disablePreviewRotation(), true);
+                metadata.info().getSettings().disablePreviewRotation(), true);
         RenderSystem.disableScissor();
     }
 
     private void renderImage(GuiGraphics graphics, @Nullable TextureHolder image) {
-        if (image == null || image.id().isEmpty()) {
+        if (image == null) {
             return;
         }
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
-        graphics.blit(image.id().get(), getX(), getY(), 0, 0, width, height, width, height);
+        graphics.blit(image.id(), getX(), getY(), 0, 0, width, height, width, height);
         RenderSystem.disableBlend();
     }
 

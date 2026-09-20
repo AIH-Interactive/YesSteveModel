@@ -2,11 +2,11 @@ package com.elfmcys.ysm.client.entity;
 
 import com.elfmcys.ysm.client.animation.molang.MolangEventWrapper;
 import com.elfmcys.ysm.client.controller.collections.PlayerControllerCollection;
-import com.elfmcys.ysm.client.model.ModelRenderTarget;
 import com.elfmcys.ysm.geckolib3.core.AnimationState;
 import com.elfmcys.ysm.geckolib3.core.molang.value.IValue;
 import com.elfmcys.ysm.geckolib3.geo.RenderContext;
 import com.elfmcys.ysm.molang.runtime.Struct;
+import com.elfmcys.ysm.model.resource.client.ModelRenderTarget;
 import com.elfmcys.ysm.network.NetworkHandler;
 import com.elfmcys.ysm.network.forge.ClientProtocolGateway;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;

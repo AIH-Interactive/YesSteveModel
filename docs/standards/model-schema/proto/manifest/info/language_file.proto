@@ -3,9 +3,7 @@ syntax = "proto3";
 
 package mixel.manifest.info;
 
-import "common/string_pair.proto";
-
 message LanguageFile {
   string locale = 1;
-  repeated mixel.common.StringPair entries = 2;
+  map<string, string> entries = 2;
 }

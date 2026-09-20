@@ -1,42 +1,44 @@
 package com.elfmcys.ysm.capability;
 
-import com.elfmcys.ysm.model.catalog.ServerCatalogSnapshot;
+import com.elfmcys.ysm.model.catalog.snapshot.ServerCatalog;
+import com.elfmcys.ysm.model.catalog.source.CatalogRootKind;
 import com.elfmcys.ysm.network.forge.PlayerStateHandler;
 import com.elfmcys.ysm.network.protocol.ModelReferenceCodec;
-import com.elfmcys.ysm.model.catalog.CatalogRootKind;
-import com.elfmcys.ysm.proto.network.protocol.v0.CommonV0;
-import com.elfmcys.ysm.proto.network.protocol.v0.PlayerStateV0;
-import net.minecraft.server.level.ServerPlayer;
-
+import com.elfmcys.ysm.proto.network.ModelSelectionState;
+import com.elfmcys.ysm.proto.network.MolangVariable;
+import com.elfmcys.ysm.proto.network.PlayerStateUpdate;
+import com.elfmcys.ysm.proto.network.RoamingState;
 import java.util.Optional;
+import net.minecraft.server.level.ServerPlayer;
 
 public final class ModelInfoSyncAssembler {
     private ModelInfoSyncAssembler() {
     }
 
-    public static Optional<PlayerStateV0.PlayerStateUpdate> build(ServerPlayer player,
+    public static Optional<PlayerStateUpdate> build(ServerPlayer player,
                                                                   ModelInfoCapability capability,
-                                                                  ServerCatalogSnapshot snapshot) {
+                                                                  ServerCatalog snapshot) {
         return ModelSelectionService.resolve(capability, snapshot).map(model -> {
-            var hash = model.descriptor().modelHash();
-            var reference = CommonV0.ModelReference.newInstance();
+            var hash = model.representation().modelId();
             var builtinDefault = model.location().rootKind() == CatalogRootKind.BUILTIN
                     && model.location().path().value().equals("default") ? hash : null;
-            ModelReferenceCodec.write(reference, hash, builtinDefault);
-            var update = PlayerStateHandler.newFull(player, capability)
-                    .setModel(PlayerStateV0.ModelSelectionState.newInstance()
+            var reference = ModelReferenceCodec.create(hash, builtinDefault);
+            var update = PlayerStateHandler.newFull(player)
+                    .setModel(ModelSelectionState.newBuilder()
                             .setModel(reference)
                             .setTextureId(capability.getSelectTexture())
-                            .setDisabled(capability.isDisabled()));
+                            .setDisabled(capability.isDisabled())
+                            .build());
             capability.getPropertiesTracker().populateFull(update, player);
             var variables = capability.roamingVariables().variables(hash);
-            var roaming = PlayerStateV0.RoamingState.newInstance().setModelKey(hash.roamingHash());
+            var roaming = RoamingState.newBuilder().setModelKey(hash.roamingHash());
             variables.object2FloatEntrySet().fastForEach(entry -> roaming.addVariables(
-                    CommonV0.MolangVariable.newInstance()
+                    MolangVariable.newBuilder()
                             .setName(entry.getKey())
-                            .setValue(entry.getFloatValue())));
-            update.setRoaming(roaming);
-            return update;
+                            .setValue(entry.getFloatValue())
+                            .build()));
+            update.setRoaming(roaming.build());
+            return update.build();
         });
     }
 }

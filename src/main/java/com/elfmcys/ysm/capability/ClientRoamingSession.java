@@ -9,6 +9,7 @@ import it.unimi.dsi.fastutil.ints.Int2FloatMap;
 import it.unimi.dsi.fastutil.ints.Int2FloatMaps;
 import it.unimi.dsi.fastutil.ints.Int2FloatOpenHashMap;
 import it.unimi.dsi.fastutil.ints.Int2ReferenceOpenHashMap;
+import it.unimi.dsi.fastutil.objects.Object2FloatOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayFIFOQueue;
 import net.minecraft.world.entity.player.Player;
 
@@ -39,6 +40,11 @@ final class ClientRoamingSession {
 
     void modelReset() {
         currentHash = 0;
+    }
+
+    /** The roaming namespace of the currently applied model, or null before one is loaded. */
+    Integer currentRoamingKey() {
+        return currentStruct == null ? null : currentHash;
     }
 
     void geoModelLoaded() {
@@ -78,6 +84,11 @@ final class ClientRoamingSession {
         return storage.containsKey(roamingHash);
     }
 
+    void clearFromServer() {
+        storage.clear();
+        currentStruct = null;
+    }
+
     void updateRemote(int roamingHash, Int2FloatMap variables) {
         // The server also sends replay compatibility updates to LocalPlayer; discard them in normal play.
         if (localPlayer || variables.isEmpty()) {
@@ -101,7 +112,7 @@ final class ClientRoamingSession {
         var changes = local.popChanges();
         updateVehicle(changes.modelHashShort, changes.variables);
 
-        var values = new it.unimi.dsi.fastutil.objects.Object2FloatOpenHashMap<String>(changes.variables.size());
+        var values = new Object2FloatOpenHashMap<String>(changes.variables.size());
         for (var entry : Int2FloatMaps.fastIterable(changes.variables)) {
             var name = StringPool.getString(entry.getIntKey());
             if (name != null && name.length() <= LocalRoamingStruct.MAX_NAME_LENGTH) {

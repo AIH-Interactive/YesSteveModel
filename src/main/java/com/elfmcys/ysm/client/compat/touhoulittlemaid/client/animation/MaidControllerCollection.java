@@ -8,8 +8,8 @@ import com.elfmcys.ysm.client.compat.touhoulittlemaid.client.animation.predicate
 import com.elfmcys.ysm.client.compat.touhoulittlemaid.client.animation.predicate.MaidStatuePredicate;
 import com.elfmcys.ysm.client.compat.touhoulittlemaid.client.animation.predicate.YsmMaidMainPredicate;
 import com.elfmcys.ysm.client.controller.*;
-import com.elfmcys.ysm.client.model.CommonAsset;
-import com.elfmcys.ysm.client.model.PlayerModelResources;
+import com.elfmcys.ysm.model.resource.client.CommonAsset;
+import com.elfmcys.ysm.model.resource.client.PlayerModelResources;
 import com.elfmcys.ysm.geckolib3.core.builder.Animation;
 import com.elfmcys.ysm.geckolib3.core.builder.controller.AnimationControllerData;
 import com.elfmcys.ysm.geckolib3.core.controller.CodedAnimationController;

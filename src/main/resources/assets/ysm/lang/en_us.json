@@ -336,6 +336,8 @@
   "message.yes_steve_model.model.debug_animation.parser_error": "§6§l[§aYSM§6§l] §rFailed to parse expression: %s",
   "message.yes_steve_model.model.debug_animation.result": "§6§l[§aYSM§6§l] §rExecution result: %s",
   "message.yes_steve_model.client.server_not_found": "§6§l[§aYSM§6§l] §rThe server-side YSM mod version is different from the client-side. Some features might not be available",
+  "message.yes_steve_model.client.catalog_delta_drift": "§6§l[§aYSM§6§l] §rThe server model list update could not be applied. Your current list may be outdated. Reconnect to synchronize it.",
+  "message.yes_steve_model.client.catalog_delta_invalid": "§6§l[§aYSM§6§l] §rThe server model list update was invalid, so remote models have been disabled. Reconnect; if this keeps happening, contact the server administrator.",
   "disconnect.yes_steve_model.builtin_initialization_failed": "YSM could not finish loading built-in models. See the log for details.",
   "message.yes_steve_model.client.ping_result": "§6§l[§aYSM§6§l] §rThe server-side YSM mod version is §c§n%s",
   "error.yes_steve_model.unknown": "Unknown error %s",
@@ -436,5 +438,7 @@
   "gui.yes_steve_model.catalog.tooltip.source.server": "Game server",
   "gui.yes_steve_model.catalog.tooltip.stats": "Stats: %1$s bones, %2$s cubes, %3$s faces",
   "gui.yes_steve_model.catalog.tooltip.textures": "Textures: %s",
-  "gui.yes_steve_model.catalog.tooltip.root_cause": "Root cause: %s"
+  "gui.yes_steve_model.catalog.tooltip.root_cause": "Root cause: %s",
+  "commands.ysm.model.reload.unknown_audio": "Ignored %s unsupported model audio file(s); the model catalog was still published.",
+  "commands.ysm.model.reload.invalid_audio": "Ignored %s invalid supported model audio file(s); the model catalog was still published."
 }

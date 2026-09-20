@@ -5,9 +5,8 @@ import com.elfmcys.ysm.buffer.NativeBuffer;
 import com.elfmcys.ysm.buffer.UniBuffer;
 import com.elfmcys.ysm.model.domain.Hash256;
 import com.elfmcys.ysm.natives.Blake3;
-import us.hebi.quickbuf.RepeatedByte;
-
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -20,8 +19,10 @@ public final class ModelHashing {
         return new Hash256(Blake3.computeHash(ArrayBuffer.borrow(data)));
     }
 
-    public static Hash256 blake3(RepeatedByte data) {
-        return new Hash256(Blake3.computeHash(ArrayBuffer.borrow(data)));
+    public static Hash256 blake3(ByteBuffer data) {
+        try (var copy = ArrayBuffer.copyOf(data)) {
+            return new Hash256(Blake3.computeHash(copy));
+        }
     }
 
     public static Hash256 blake3(UniBuffer data) {
@@ -45,12 +46,4 @@ public final class ModelHashing {
         }
     }
 
-    public static Hash256 descriptorHash(byte[] containerPreamble, byte[] manifest) {
-        try (var input = ArrayBuffer.allocate(containerPreamble.length + manifest.length)) {
-            System.arraycopy(containerPreamble, 0, input.array(), input.arrayOffset(), containerPreamble.length);
-            System.arraycopy(manifest, 0, input.array(), input.arrayOffset() + containerPreamble.length,
-                    manifest.length);
-            return blake3(input);
-        }
-    }
 }

@@ -8,7 +8,7 @@ import "common/string_pair.proto";
 
 message Metadata {
   string name = 1;
-  string tips = 2;
+  optional string tips = 2;
   License license = 3;
   repeated Author authors = 4;
   repeated mixel.common.StringPair links = 5;
@@ -17,12 +17,12 @@ message Metadata {
 message Author {
   string name = 1;
   string role = 2;
-  repeated mixel.common.StringPair contacts = 3;
-  string comment = 4;
-  mixel.common.Image avatar = 5;
+  repeated common.StringPair contacts = 3;
+  optional string comment = 4;
+  optional common.Image avatar = 5;
 }
 
 message License {
   string type = 1;
-  string desc = 2;
+  optional string desc = 2;
 }

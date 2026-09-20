@@ -10,6 +10,7 @@ import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
 import it.unimi.dsi.fastutil.objects.ReferenceLists;
 
 import java.io.UnsupportedEncodingException;
+import java.lang.ref.Reference;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
@@ -30,10 +31,17 @@ public record Image(Format format, int width, int height, UniBuffer data) implem
     public NativeImage decode() throws UnsupportedEncodingException {
         var args = BufferArgument.packInput(data);
         try (var dstScope = ScopeGuard.create(new NativeImage(NativeImage.Format.RGBA, width, height, false))) {
-            var dstAccessor = (NativeImageAccessor) (Object) dstScope.get();
-            var result = Native.nDecode(args.obj(), args.flags(),
-                    format.id, width, height,
-                    dstAccessor.ysm$pixels(), dstAccessor.ysm$size());
+            var dst = dstScope.get();
+            var dstAccessor = (NativeImageAccessor) (Object) dst;
+            final boolean result;
+            try {
+                result = Native.nDecode(args.obj(), args.flags(),
+                        format.id, width, height,
+                        dstAccessor.ysm$pixels(), dstAccessor.ysm$size());
+            } finally {
+                Reference.reachabilityFence(data);
+                Reference.reachabilityFence(dst);
+            }
             if (result) {
                 return dstScope.release();
             }
@@ -44,9 +52,15 @@ public record Image(Format format, int width, int height, UniBuffer data) implem
     public NativeBuffer decodeToBuffer() throws UnsupportedEncodingException {
         var args = BufferArgument.packInput(data);
         try (var dstScope = NativeBuffer.allocateWithScope(width * height * 4)) {
-            var result = Native.nDecode(args.obj(), args.flags(),
-                    format.id, width, height,
-                    dstScope.get().ptr(), dstScope.get().size());
+            var dst = dstScope.get();
+            final boolean result;
+            try {
+                result = Native.nDecode(args.obj(), args.flags(),
+                        format.id, width, height, dst.ptr(), dst.size());
+            } finally {
+                Reference.reachabilityFence(data);
+                Reference.reachabilityFence(dst);
+            }
             if (result) {
                 return dstScope.release();
             }
@@ -56,7 +70,12 @@ public record Image(Format format, int width, int height, UniBuffer data) implem
 
     public static Image probe(UniBuffer buffer) throws UnsupportedEncodingException {
         var args = BufferArgument.packInput(buffer);
-        var result = Native.nProbe(args.obj(), args.flags());
+        final long result;
+        try {
+            result = Native.nProbe(args.obj(), args.flags());
+        } finally {
+            Reference.reachabilityFence(buffer);
+        }
         if (result == 0) {
             throw new UnsupportedEncodingException("Failed to read image");
         }

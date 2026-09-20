@@ -2,13 +2,13 @@ package com.elfmcys.ysm.client.gui.button;
 
 import com.elfmcys.ysm.YesSteveModel;
 import com.elfmcys.ysm.client.lang.LanguageManager;
-import com.elfmcys.ysm.client.model.ClientAssetBatch;
-import com.elfmcys.ysm.client.model.ClientModelService;
-import com.elfmcys.ysm.client.model.ModelPackInfo;
+import com.elfmcys.ysm.model.resource.client.asset.ClientAssetBatch;
+import com.elfmcys.ysm.model.service.ClientModelService;
+import com.elfmcys.ysm.model.catalog.client.ModelPackInfo;
 import com.elfmcys.ysm.client.texture.CustomTexture;
 import com.elfmcys.ysm.client.texture.CustomTextureManager;
 import com.elfmcys.ysm.client.texture.TextureHolder;
-import com.elfmcys.ysm.model.source.PackOffer;
+import com.elfmcys.ysm.model.domain.ModelPackDescriptor;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -23,7 +23,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
@@ -37,10 +36,10 @@ public class PackButton extends Button implements AutoCloseable {
     private boolean closed;
 
     public PackButton(int x, int y, int width, int height, ModelPackInfo pack,
-                      @Nullable PackOffer descriptor, ClientAssetBatch assets, OnPress onPress) {
+                      @Nullable ModelPackDescriptor descriptor, ClientAssetBatch assets, OnPress onPress) {
         super(x, y, width, height, Component.literal(LanguageManager.getI18n(pack, "name", pack.name())), onPress, DEFAULT_NARRATION);
         this.pack = pack;
-        this.icon = pack.icon() == null ? null : CustomTextureManager.register(pack.icon(), true, 10 * 20);
+        this.icon = pack.icon() == null ? null : CustomTextureManager.register(pack.icon(), 10 * 20);
         if (descriptor != null && descriptor.coverHash() != null) {
             assets.packCover(descriptor)
                     .whenComplete((source, error) -> Minecraft.getInstance().execute(() -> {
@@ -49,15 +48,15 @@ public class PackButton extends Button implements AutoCloseable {
                         }
                         if (source != null) {
                             texture = ClientModelService.instance().createTexture(source);
-                            icon = CustomTextureManager.register(texture, true, 10 * 20);
+                            icon = CustomTextureManager.register(texture, 10 * 20);
                         } else if (!isCancellation(error)) {
                             if (error == null) {
                                 YesSteveModel.LOGGER.debug(
                                         "Failed to load model pack cover {}: unknown error",
-                                        descriptor.subject().hierarchy());
+                                        descriptor.hierarchy());
                             } else {
                                 YesSteveModel.LOGGER.debug("Failed to load model pack cover {}",
-                                        descriptor.subject().hierarchy(), unwrap(error));
+                                        descriptor.hierarchy(), unwrap(error));
                             }
                         }
                     }));
@@ -67,7 +66,7 @@ public class PackButton extends Button implements AutoCloseable {
     @Override
     public void renderWidget(GuiGraphics graphics, int mouseX, int mouseY, float frameDeltaTime) {
         if (icon == null && pack.icon() != null) {
-            icon = CustomTextureManager.register(pack.icon(), true, 10 * 20);
+            icon = CustomTextureManager.register(pack.icon(), 10 * 20);
         }
         Minecraft minecraft = Minecraft.getInstance();
         Font font = minecraft.font;
@@ -77,12 +76,11 @@ public class PackButton extends Button implements AutoCloseable {
 
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
-        var iconId = icon == null ? Optional.<ResourceLocation>empty() : icon.id();
-        if (iconId.isEmpty()) {
+        if (icon == null) {
             graphics.blit(ICON, this.getX(), this.getY(), 0, 0, this.width,
                     this.height, this.width, this.height);
         } else {
-            graphics.blit(iconId.get(), this.getX(), this.getY(), 0, 0, this.width,
+            graphics.blit(icon.id(), this.getX(), this.getY(), 0, 0, this.width,
                     this.height, this.width, this.height);
         }
         RenderSystem.disableBlend();

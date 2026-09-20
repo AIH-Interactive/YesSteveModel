@@ -336,6 +336,8 @@
   "message.yes_steve_model.model.debug_animation.parser_error": "§6§l[§aYSM§6§l] §r表达式解析失败: %s",
   "message.yes_steve_model.model.debug_animation.result": "§6§l[§aYSM§6§l] §r执行结果: %s",
   "message.yes_steve_model.client.server_not_found": "§6§l[§aYSM§6§l] §r服务端 YSM 模组版本与客户端不同，部分功能无法使用",
+  "message.yes_steve_model.client.catalog_delta_drift": "§6§l[§aYSM§6§l] §r服务器模型列表更新未能应用，当前列表可能已过期。请重新连接以同步。",
+  "message.yes_steve_model.client.catalog_delta_invalid": "§6§l[§aYSM§6§l] §r服务器模型列表更新无效，远端模型已停用。请重新连接；如持续发生，请联系服务器管理员。",
   "disconnect.yes_steve_model.builtin_initialization_failed": "YSM 未能完成内置模型加载，请查看日志了解详情。",
   "message.yes_steve_model.client.ping_result": "§6§l[§aYSM§6§l] §r服务端 YSM 模组版本为 §c§n%s",
   "error.yes_steve_model.unknown": "发生了未知的错误 %s",
@@ -437,5 +439,7 @@
   "gui.yes_steve_model.catalog.tooltip.source.server": "游戏服务器",
   "gui.yes_steve_model.catalog.tooltip.stats": "统计：%1$s 骨骼，%2$s 方块，%3$s 面",
   "gui.yes_steve_model.catalog.tooltip.textures": "材质：%s",
-  "gui.yes_steve_model.catalog.tooltip.root_cause": "根因：%s"
+  "gui.yes_steve_model.catalog.tooltip.root_cause": "根因：%s",
+  "commands.ysm.model.reload.unknown_audio": "已忽略 %s 个不受支持的模型音频文件；模型目录仍已成功发布。",
+  "commands.ysm.model.reload.invalid_audio": "已忽略 %s 个格式已知但内容损坏的模型音频文件；模型目录仍已成功发布。"
 }

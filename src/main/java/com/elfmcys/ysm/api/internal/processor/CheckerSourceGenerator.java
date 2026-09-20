@@ -2,6 +2,7 @@ package com.elfmcys.ysm.api.internal.processor;
 
 import java.io.IOException;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 import javax.annotation.processing.Filer;
 
 final class CheckerSourceGenerator {
@@ -17,7 +18,7 @@ final class CheckerSourceGenerator {
             if (input == null) {
                 throw new IOException("Missing checker source template: " + TEMPLATE_RESOURCE);
             }
-            template = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            template = new String(input.readAllBytes(), StandardCharsets.UTF_8);
         }
 
         StringBuilder methods = new StringBuilder();

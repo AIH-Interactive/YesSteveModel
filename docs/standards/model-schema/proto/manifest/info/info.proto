@@ -17,9 +17,10 @@ enum PreviewSource {
 
 message Info {
   repeated LanguageFile language_files = 1;
-  Settings settings = 2;
-  Metadata metadata = 3;
-  Properties properties = 4;
-  ExportInfo export = 5;
-  PreviewSource thumbnail_source = 6;
+  Properties properties = 2;
+  Settings settings = 3;
+  optional Metadata metadata = 4;
+  optional ExportInfo export = 5;
+  optional PreviewSource thumbnail_source = 6;
+  optional PreviewSource icon_source = 7;
 }

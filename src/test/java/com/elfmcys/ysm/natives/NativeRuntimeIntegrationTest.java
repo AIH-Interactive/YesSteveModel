@@ -16,4 +16,16 @@ class NativeRuntimeIntegrationTest {
         assertDoesNotThrow(() -> NativeRuntime.initialize(
                 NativeRuntime.JavaConfig.fromLog4j(Level.INFO)));
     }
+
+    @Test
+    void opensProfilerZones() {
+        assertDoesNotThrow(() -> {
+            try (var ignored = NativeProfiler.beginAnimatableUpdate()) {
+            }
+            try (var ignored = NativeProfiler.beginFallbackVertexWrite()) {
+            }
+            try (var ignored = NativeProfiler.beginAnimatableUpdate()) {
+            }
+        });
+    }
 }

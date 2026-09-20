@@ -1,14 +1,18 @@
 package com.elfmcys.ysm.client.compat.backpack.sophisticated;
 
 import com.elfmcys.ysm.client.entity.CustomPlayerEntity;
+import com.elfmcys.ysm.client.model.locator.PlayerLocator;
 import com.elfmcys.ysm.geckolib3.geo.GeoLayerRenderer;
 import com.elfmcys.ysm.geckolib3.geo.GeoRenderData;
-import com.elfmcys.ysm.geckolib3.model.AnimatedGeoModel;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import com.mojang.math.Axis;
 import net.minecraft.client.model.EntityModel;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
+
+import static net.p3pp3rf1y.sophisticatedbackpacks.client.render.BackpackLayerRenderer.renderBackpack;
 
 public class YsmBackpackLayerRenderer extends GeoLayerRenderer<CustomPlayerEntity> {
     private final EntityModel<Player> model;
@@ -35,28 +39,16 @@ public class YsmBackpackLayerRenderer extends GeoLayerRenderer<CustomPlayerEntit
 
     @Override
     public void render(PoseStack poseStack, MultiBufferSource buffer, CustomPlayerEntity animatable, GeoRenderData renderData, int packedLight, int overlay) {
-        // TODO
-        /*
-        AnimatedGeoModel geoModel = animatableEntity.getLoadedGeoModel();
-        if (geoModel == null || geoModel.backpackBones().isEmpty()) {
-            return;
-        }
-        Player player = animatableEntity.getEntity();
+        Player player = animatable.getEntity();
         ItemStack backpack = SophisticatedCompat.getBackpackItemStack(player);
-        // 渲染
-        if (backpack != null) {
-            poseStack.pushPose();
-            translateToBackpack(poseStack, geoModel);
-            poseStack.mulPose(Axis.XP.rotationDegrees(180));
-            poseStack.mulPose(Axis.YP.rotationDegrees(180));
-            poseStack.translate(0, -0.1, 0);
-            renderBackpack(this.model, player, poseStack, bufferIn, packedLightIn, backpack, false);
-            poseStack.popPose();
+        if (backpack != null && !backpack.isEmpty()) {
+            renderData.modelState.visitLocatorGroup(PlayerLocator.get().backpack, poseStack, locatorPose -> {
+                locatorPose.mulPose(Axis.XP.rotationDegrees(180));
+                locatorPose.mulPose(Axis.YP.rotationDegrees(180));
+                locatorPose.translate(0, -0.1, 0);
+                renderBackpack(this.model, player, locatorPose, buffer, packedLight, backpack, false);
+            });
         }
-        */
-    }
 
-    protected void translateToBackpack(PoseStack poseStack, AnimatedGeoModel geoModel) {
-        // TODO
     }
 }

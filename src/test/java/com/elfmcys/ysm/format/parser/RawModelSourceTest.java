@@ -2,7 +2,6 @@ package com.elfmcys.ysm.format.parser;
 
 import com.elfmcys.ysm.buffer.NativeBuffer;
 import com.elfmcys.ysm.format.vfs.VirtualFileSystem;
-import com.elfmcys.ysm.natives.Blake3;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -15,7 +14,7 @@ class RawModelSourceTest {
         try (var file = NativeBuffer.allocate(4)) {
             file.nio().put(new byte[]{1, 2, 3, 4});
             var expected = new ModelHashCanonicalizer();
-            expected.add("texture", "textures/main.png", Blake3.computeHash(file));
+            expected.add("texture", "textures/main.png", new byte[]{1, 2, 3, 4});
 
             var source = new RawModelSource(new SingleFileVfs("textures/main.png", file));
             var borrowed = source.readFile("textures/main.png", "texture", true).orElseThrow();

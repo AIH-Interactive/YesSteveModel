@@ -22,21 +22,20 @@
 | ------ |---------------------------------------------------------------------------------------------------------------------------------------------------------|
 | 新增能力   | 公开的模型资产标准；细粒度资产分发；动态资源管理；更多平台支持。                                                                                        |
 | 既有能力改进 | 模型业务回归 Java，native 收缩为能力层；内容身份、连接、资源所有权、失效和恢复边界显式化。                                                              |
-| 暂缺旧能力  | 模型音频和 v3 加密模型暂未完成迁移；第一人称、附着 layer 和部分模组联动也未完全恢复。                                                                   |
-| 迁移重点   | 完成模型管理和网络协议，接通模型音频、补充 v3 加密模型的独立导入、将 x64 基线降至 x86-64-v1，并适配 Windows 7。模组联动、手臂模型、layer 等旧代码迁移。 |
+| 暂缺旧能力  | 第一人称、附着 layer 和部分模组联动未完全恢复。                                                                   |
+| 迁移重点   | 重构 molang 引擎；扩展 API；将 x64 基线降至 x86-64-v1；适配 Windows 7。模组联动、手臂模型、layer 等旧代码迁移。 |
 |        |                                                                                                                                                         |
-| 未来方向   | 扩展 API、模型签名、通用外部模型源、GPU Compute Pipeline、独立 Backend。                                                                                |
+| 未来方向   | 模型签名、通用外部模型源、GPU Compute Pipeline、独立 Backend。                                                                                |
 
-## 其他文档
+## 文档
 
-- [术语表](docs/glossary.md) / [文档政策](docs/governance/documentation-policy.md)：统一名称与信息取舍规则。
-- 独立格式标准：
-    - [Asset Container](docs/standards/asset-container.md)
-    - [Model Schema](docs/standards/model-schema/README.md)：[Manifest 与身份](docs/standards/model-schema/manifest-and-identity.md)、[资产与验证](docs/standards/model-schema/assets-and-validation.md)
-    - [一致性要求](docs/standards/conformance.md)
-- 顶层设计与架构：
-    - [动画系统](docs/concepts/animation.md) / [动画架构](docs/architecture/animation/README.md)
-    - [渲染系统](docs/concepts/rendering.md) / [渲染架构](docs/architecture/rendering/README.md)
+- [完整索引](docs/README.md)
+- [构建指南](docs/build.md)
+- [术语表](docs/glossary.md) / [文档政策](docs/governance/documentation-policy.md)
+- [独立格式标准](docs/standards/README.md)
+- [产品决策](docs/product-decisions/README.md)
+- [架构总览](docs/architecture/README.md) / [运行模型](docs/architecture/runtime-model.md)
+- [当前支持状态](docs/status/support-and-verification.md)
 
 ## 许可证
 

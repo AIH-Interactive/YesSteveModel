@@ -1,6 +1,7 @@
 package com.elfmcys.ysm.capability;
 
 import com.elfmcys.ysm.model.domain.Hash256;
+import it.unimi.dsi.fastutil.objects.Object2FloatOpenHashMap;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -44,7 +45,7 @@ class RoamingVariableStoreTest {
     void fullReplacementRemovesVariablesMissingFromTheSnapshot() {
         var store = new RoamingVariableStore();
         store.variables(MODEL_HASH).put("old", 1F);
-        var replacement = new it.unimi.dsi.fastutil.objects.Object2FloatOpenHashMap<String>();
+        var replacement = new Object2FloatOpenHashMap<String>();
         replacement.put("current", 2F);
 
         store.replace(MODEL_HASH.roamingHash(), replacement);

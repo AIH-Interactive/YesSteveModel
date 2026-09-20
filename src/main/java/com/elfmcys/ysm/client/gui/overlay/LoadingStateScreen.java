@@ -1,6 +1,6 @@
 package com.elfmcys.ysm.client.gui.overlay;
 
-import com.elfmcys.ysm.client.model.ClientModelService;
+import com.elfmcys.ysm.model.service.ClientModelService;
 import com.elfmcys.ysm.config.LoadingStateScreenConfig;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphics;

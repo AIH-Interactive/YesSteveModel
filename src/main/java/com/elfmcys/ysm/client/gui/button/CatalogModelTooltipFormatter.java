@@ -1,19 +1,17 @@
 package com.elfmcys.ysm.client.gui.button;
 
-import com.elfmcys.ysm.client.model.catalog.CatalogModelMetadata;
-import com.elfmcys.ysm.client.model.catalog.ClientCatalogEntry;
-import com.elfmcys.ysm.info.ModelAuthor;
-import com.elfmcys.ysm.info.ModelMetadata;
+import com.elfmcys.ysm.model.catalog.client.entry.CatalogModelMetadata;
+import com.elfmcys.ysm.model.catalog.client.entry.ClientCatalogEntry;
 import com.elfmcys.ysm.util.ModelIdUtil;
-import net.minecraft.ChatFormatting;
-import org.apache.commons.lang3.StringUtils;
-import org.jetbrains.annotations.Nullable;
-
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
+import net.minecraft.ChatFormatting;
+import org.apache.commons.lang3.StringUtils;
+import org.jetbrains.annotations.Nullable;
 
 /** Formats the complete catalog-card tooltip without depending on GUI state. */
 public final class CatalogModelTooltipFormatter {
@@ -31,15 +29,16 @@ public final class CatalogModelTooltipFormatter {
         Objects.requireNonNull(entry, "entry");
         Objects.requireNonNull(locale, "locale");
 
-        ModelMetadata metadata = catalog.info().metadata();
+        var info = catalog.info();
+        var metadata = info.getMetadata();
         var name = displayName(catalog, locale);
         var tips = metadata == null ? ""
-                : catalog.localized(locale, "metadata.tips", metadata.tips());
+                : catalog.localized(locale, "metadata.tips", metadata.tips().orElse(""));
         var authors = new ArrayList<Author>();
         var license = "";
         if (metadata != null) {
             for (var index = 0; index < metadata.authors().size(); index++) {
-                ModelAuthor author = metadata.authors().get(index);
+                var author = metadata.authors().get(index);
                 var authorName = catalog.localized(locale,
                         "metadata.authors.%d.name".formatted(index), author.name()).trim();
                 if (authorName.isEmpty()) {
@@ -51,16 +50,17 @@ public final class CatalogModelTooltipFormatter {
             }
             var modelLicense = metadata.license();
             license = catalog.localized(locale, "metadata.license.type",
-                    StringUtils.firstNonBlank(modelLicense.type(), modelLicense.desc(), ""));
+                    StringUtils.firstNonBlank(modelLicense.type(), modelLicense.desc().orElse(""), ""));
         }
-        var stats = catalog.info().stats();
-        var textureCount = catalog.descriptor().view().getPlayer().getTextureNames().size();
+        var stats = catalog.info().getPlayerStats();
+        var textureCount = catalog.representation().view().getPlayer().getTextureNames().size();
         return new Input(name, tips, authors, license, catalog.path(), entry.modelHash().toString(),
                 source(entry), new Stats(stats.bones(), stats.cubes(), stats.faces(), textureCount), loadError);
     }
 
     public static String displayName(CatalogModelMetadata catalog, String locale) {
-        var metadata = catalog.info().metadata();
+        var info = catalog.info();
+        var metadata = info.getMetadata();
         var fallback = ModelIdUtil.getFileNameFromPath(catalog.path());
         if (metadata == null || StringUtils.isBlank(metadata.name())) {
             return fallback;
@@ -144,7 +144,7 @@ public final class CatalogModelTooltipFormatter {
     }
 
     private static String normalize(String value) {
-        return value.trim().replaceAll("\\s+", " ").toLowerCase(java.util.Locale.ROOT);
+        return value.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
     }
 
     private static String errorSummary(Throwable error) {
@@ -171,10 +171,8 @@ public final class CatalogModelTooltipFormatter {
     }
 
     private static Source source(ClientCatalogEntry entry) {
-        if (entry.local() == null) {
-            return Source.SERVER;
-        }
-        return switch (entry.local().location().rootKind()) {
+        return switch (entry.origin()) {
+            case SERVER -> Source.SERVER;
             case BUILTIN -> Source.BUILTIN;
             case CUSTOM -> Source.CUSTOM;
             case AUTH -> Source.AUTH;

@@ -6,6 +6,8 @@ import com.elfmcys.ysm.buffer.annotation.Owned;
 import com.elfmcys.ysm.natives.buffer.BufferArgument;
 import org.jetbrains.annotations.Nullable;
 
+import java.lang.ref.Reference;
+
 public final class Zstd {
     private static final int OP_COMPRESS = 1;
     private static final int OP_DECOMPRESS = 2;
@@ -16,7 +18,12 @@ public final class Zstd {
     @Owned
     public static UniBuffer compressAndHash(UniBuffer source, byte @Nullable [] hash, BufferType outputType, int level) {
         var args = BufferArgument.packInput(source);
-        var result = nZstd(args.obj(), args.flags(), hash, level, outputType.id(), OP_COMPRESS);
+        final Object result;
+        try {
+            result = nZstd(args.obj(), args.flags(), hash, level, outputType.id(), OP_COMPRESS);
+        } finally {
+            Reference.reachabilityFence(source);
+        }
         if (result == null) {
             throw new IllegalStateException("Native zstd compression returned no result");
         }
@@ -26,7 +33,12 @@ public final class Zstd {
     @Owned
     public static UniBuffer decompressAndValidate(UniBuffer source, int outputSize, byte @Nullable [] hash, BufferType outputType) {
         var args = BufferArgument.packInput(source);
-        var result = nZstd(args.obj(), args.flags(), hash, outputSize, outputType.id(), OP_DECOMPRESS);
+        final Object result;
+        try {
+            result = nZstd(args.obj(), args.flags(), hash, outputSize, outputType.id(), OP_DECOMPRESS);
+        } finally {
+            Reference.reachabilityFence(source);
+        }
         if (result == null) {
             throw new IllegalStateException("Native zstd decompression returned no result");
         }

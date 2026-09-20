@@ -1,13 +1,16 @@
 package com.elfmcys.ysm.client.gui;
 
+import com.elfmcys.ysm.model.catalog.snapshot.CatalogAccess;
+
 import com.elfmcys.ysm.client.lang.LanguageManager;
-import com.elfmcys.ysm.client.model.ModelPackInfo;
-import com.elfmcys.ysm.client.model.catalog.CatalogModelMetadata;
-import com.elfmcys.ysm.client.model.catalog.ClientCatalogEntry;
-import com.elfmcys.ysm.client.model.catalog.ClientCatalogSnapshot;
+import com.elfmcys.ysm.model.catalog.client.ModelPackInfo;
+import com.elfmcys.ysm.model.catalog.client.entry.CatalogModelMetadata;
+import com.elfmcys.ysm.model.catalog.client.entry.ClientCatalogEntry;
+import com.elfmcys.ysm.model.catalog.client.entry.ClientFailedCatalogEntry;
+import com.elfmcys.ysm.model.catalog.client.ClientCatalogSnapshot;
 import com.elfmcys.ysm.model.domain.Hash256;
+import com.elfmcys.ysm.model.domain.ModelPackDescriptor;
 import com.elfmcys.ysm.model.domain.ModelPath;
-import com.elfmcys.ysm.model.source.PackOffer;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 
@@ -30,15 +33,18 @@ final class CatalogBrowserState {
     private final Map<String, ModelPackInfo> allPacks = new LinkedHashMap<>();
     private ClientCatalogSnapshot catalog;
     private List<ClientCatalogEntry> models = List.of();
+    private List<ClientFailedCatalogEntry> failed = List.of();
     private List<ModelPackInfo> packs = List.of();
     private Category category = Category.ALL;
     private int maxPage;
 
-    void rebuild(ClientCatalogSnapshot next, Function<PackOffer, ModelPackInfo> packFactory) {
+    void rebuild(ClientCatalogSnapshot next, Function<ModelPackDescriptor, ModelPackInfo> packFactory) {
         catalog = next;
         allPacks.clear();
-        next.packs().forEach(pack -> allPacks.putIfAbsent(pack.subject().hierarchy(), packFactory.apply(pack)));
+        next.packs().forEach(pack -> allPacks.putIfAbsent(pack.hierarchy(), packFactory.apply(pack)));
         next.models().values().forEach(entry ->
+                addSyntheticPacks(new ModelPath(entry.displayPath()).parentHierarchy()));
+        next.failed().forEach(entry ->
                 addSyntheticPacks(new ModelPath(entry.displayPath()).parentHierarchy()));
         if (!currentPack.isBlank() && !allPacks.containsKey(currentPack)) {
             currentPack = "";
@@ -53,6 +59,11 @@ final class CatalogBrowserState {
         allModels.sort(Comparator.comparing(ClientCatalogEntry::displayPath));
         models = List.copyOf(allModels);
 
+        var allFailed = new ArrayList<>(catalog.failed());
+        allFailed.removeIf(entry -> !isVisible(entry, search, hiddenPaths));
+        allFailed.sort(Comparator.comparing(ClientFailedCatalogEntry::displayPath));
+        failed = List.copyOf(allFailed);
+
         if (category != Category.ALL || (!search.isBlank() && !search.startsWith(PACK_SEARCH_PREFIX))) {
             packs = List.of();
         } else {
@@ -63,10 +74,28 @@ final class CatalogBrowserState {
                     .sorted(Comparator.comparing(ModelPackInfo::hierarchy))
                     .toList();
         }
-        maxPage = Math.max(0, (models.size() + packs.size() - 1) / 10);
+        maxPage = Math.max(0, (models.size() + failed.size() + packs.size() - 1) / 10);
         if (page() > maxPage) {
             resetPage();
         }
+    }
+
+    private boolean isVisible(ClientFailedCatalogEntry entry, String search,
+                              Set<String> hiddenPaths) {
+        if (hiddenPaths.contains(entry.displayPath()) || category == Category.STAR) {
+            return false;
+        }
+        if (category == Category.AUTH
+                && entry.access() != CatalogAccess.AUTHORIZED) {
+            return false;
+        }
+        if (search.isBlank()) {
+            return category != Category.ALL
+                    || new ModelPath(entry.displayPath()).parentHierarchy().equals(currentPack);
+        }
+        return !search.startsWith(PACK_SEARCH_PREFIX)
+                && !search.startsWith(AUTHOR_SEARCH_PREFIX)
+                && entry.displayPath().toLowerCase(Locale.ENGLISH).contains(search);
     }
 
     private boolean isVisible(ClientCatalogEntry entry, String search, String locale,
@@ -93,7 +122,8 @@ final class CatalogBrowserState {
         if (search.startsWith(PACK_SEARCH_PREFIX)) {
             return false;
         }
-        var modelMetadata = metadata.info().metadata();
+        var info = metadata.info();
+        var modelMetadata = info.getMetadata();
         if (search.startsWith(AUTHOR_SEARCH_PREFIX)) {
             if (modelMetadata == null) {
                 return false;
@@ -116,7 +146,7 @@ final class CatalogBrowserState {
         }
         if (metadata.localized(locale, "metadata.name", modelMetadata.name())
                 .toLowerCase(Locale.ENGLISH).contains(search)
-                || metadata.localized(locale, "metadata.tips", modelMetadata.tips())
+                || metadata.localized(locale, "metadata.tips", modelMetadata.tips().orElse(""))
                 .toLowerCase(Locale.ENGLISH).contains(search)) {
             return true;
         }
@@ -143,6 +173,10 @@ final class CatalogBrowserState {
 
     List<ClientCatalogEntry> models() {
         return models;
+    }
+
+    List<ClientFailedCatalogEntry> failed() {
+        return failed;
     }
 
     List<ModelPackInfo> packs() {

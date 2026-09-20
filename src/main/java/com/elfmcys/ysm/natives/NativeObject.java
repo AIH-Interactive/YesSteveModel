@@ -1,44 +1,46 @@
 package com.elfmcys.ysm.natives;
 
+import com.elfmcys.ysm.util.CleanerUtil;
 import com.elfmcys.ysm.util.Closeable;
 
+import java.lang.ref.Cleaner;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class NativeObject implements Closeable {
-    private final long ptr;
-    private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final State state;
+    private final Cleaner.Cleanable cleanable;
 
     public NativeObject(long ptr) {
-        this.ptr = ptr;
+        state = new State(ptr);
+        cleanable = CleanerUtil.ref(this, state, State::clean);
     }
 
     public long get() {
-        checkClosed();
-        return ptr;
-    }
-
-    public NativeObject share() {
-        checkClosed();
-        var newPtr = nShare(ptr);
-        if (newPtr == 0) {
-            throw new RuntimeException("Failed to copy opaque ptr");
+        if (!state.open.get()) {
+            throw new IllegalStateException("Native object is closed");
         }
-        return new NativeObject(newPtr);
-    }
-
-    private void checkClosed() {
-        if (closed.getAcquire()) {
-            throw new IllegalStateException("Native object has been closed");
-        }
+        return state.ptr;
     }
 
     @Override
     public void close() {
-        if (closed.compareAndSet(false, true)) {
-            nDestroy(ptr);
+        cleanable.clean();
+    }
+
+    private static final class State {
+        private final long ptr;
+        private final AtomicBoolean open = new AtomicBoolean(true);
+
+        private State(long ptr) {
+            this.ptr = ptr;
+        }
+
+        private void clean() {
+            if (open.compareAndSet(true, false)) {
+                nDestroy(ptr);
+            }
         }
     }
 
-    private static native long nShare(long ptr);
     private static native void nDestroy(long ptr);
 }

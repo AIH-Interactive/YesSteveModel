@@ -1,11 +1,9 @@
 package com.elfmcys.ysm.api.internal.event;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import java.net.URI;
+import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -14,6 +12,10 @@ import javax.tools.SimpleJavaFileObject;
 import javax.tools.ToolProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class YsmEventHandlerRegistrationTest {
     @TempDir
@@ -32,7 +34,7 @@ class YsmEventHandlerRegistrationTest {
         System.clearProperty("ysm.event.compatible.loaded");
 
         try (var loader = new URLClassLoader(
-                new java.net.URL[]{temporaryDirectory.toUri().toURL()},
+                new URL[]{temporaryDirectory.toUri().toURL()},
                 ClassLoader.getPlatformClassLoader())) {
             var incompatible = YsmEventHandlerRegistration.prepare(
                     "sample.IncompatibleHandler", loader);
@@ -54,7 +56,7 @@ class YsmEventHandlerRegistrationTest {
         Files.createDirectories(temporaryDirectory);
         var compiler = ToolProvider.getSystemJavaCompiler();
         try (var fileManager = compiler.getStandardFileManager(null, null,
-                java.nio.charset.StandardCharsets.UTF_8)) {
+                StandardCharsets.UTF_8)) {
             List<String> options = List.of(
                     "--release", "17", "-proc:none", "-d", temporaryDirectory.toString());
             boolean success = Boolean.TRUE.equals(compiler.getTask(

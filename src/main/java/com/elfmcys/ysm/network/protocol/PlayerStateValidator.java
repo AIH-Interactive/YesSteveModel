@@ -1,8 +1,15 @@
 package com.elfmcys.ysm.network.protocol;
 
-import com.elfmcys.ysm.proto.network.protocol.v0.CommonV0;
-import com.elfmcys.ysm.proto.network.protocol.v0.PlayerStateV0;
 
+import com.elfmcys.ysm.proto.network.AnimationState;
+import com.elfmcys.ysm.proto.network.EffectStateSet;
+import com.elfmcys.ysm.proto.network.EntityRef;
+import com.elfmcys.ysm.proto.network.GameplayState;
+import com.elfmcys.ysm.proto.network.ModelSelectionState;
+import com.elfmcys.ysm.proto.network.PlayerStateReport;
+import com.elfmcys.ysm.proto.network.PlayerStateUpdate;
+import com.elfmcys.ysm.proto.network.RoamingState;
+import com.elfmcys.ysm.proto.network.StateWriteMode;
 import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 
@@ -10,8 +17,6 @@ import java.util.HashSet;
 public final class PlayerStateValidator {
     private static final int MAX_TEXTURE_BYTES = 256;
     private static final int MAX_ANIMATION_BYTES = 256;
-    private static final int MAX_ROAMING_VARIABLES = 64;
-    private static final int MAX_VARIABLE_NAME_BYTES = 32;
     private static final int MAX_EFFECTS = 64;
     private static final int MAX_EFFECT_ID_BYTES = 128;
     private static final int MAX_GAMEPLAY_VALUE = 1_000_000;
@@ -19,93 +24,92 @@ public final class PlayerStateValidator {
     private PlayerStateValidator() {
     }
 
-    public static boolean validReport(PlayerStateV0.PlayerStateReport report) {
-        return report.hasSequence() && report.getSequence() != 0
-                && report.hasMode() && validMode(report.getMode())
-                && validEntity(report.hasSubject() ? report.getSubject() : null)
-                && (!report.hasGameplay() || validGameplay(report.getGameplay()))
-                && (!report.hasEffects() || validEffects(report.getEffects()))
-                && (!report.hasAnimation() || validAnimation(report.getAnimation()))
-                && (!report.hasRoaming() || validRoaming(report.getRoaming()));
+    public static boolean validReport(PlayerStateReport report) {
+        return validMode(report.mode())
+                && validEntity(report.subject())
+                && (!report.hasGameplay() || validGameplay(report.gameplayUnsafe()))
+                && (!report.hasEffects() || validEffects(report.effectsUnsafe()))
+                && (!report.hasAnimation() || validAnimation(report.animationUnsafe()))
+                && (!report.hasRoaming() || validRoaming(report.roamingUnsafe()));
     }
 
-    public static boolean validUpdate(PlayerStateV0.PlayerStateUpdate update) {
-        return update.hasRevision() && update.getRevision() != 0
-                && update.hasMode() && validMode(update.getMode())
-                && validEntity(update.hasSubject() ? update.getSubject() : null)
-                && (update.getMode() != CommonV0.StateWriteMode.STATE_WRITE_MODE_FULL || update.hasModel())
-                && (!update.hasModel() || validModel(update.getModel()))
-                && (!update.hasGameplay() || validGameplay(update.getGameplay()))
-                && (!update.hasEffects() || validEffects(update.getEffects()))
-                && (!update.hasAnimation() || validAnimation(update.getAnimation()))
-                && (!update.hasRoaming() || validRoaming(update.getRoaming()));
+    public static boolean validUpdate(PlayerStateUpdate update) {
+        return validMode(update.mode())
+                && validEntity(update.subject())
+                && (update.mode() != StateWriteMode.STATE_WRITE_MODE_FULL || update.hasModel())
+                && (!update.hasModel() || validModel(update.modelUnsafe()))
+                && (!update.hasGameplay() || validGameplay(update.gameplayUnsafe()))
+                && (!update.hasEffects() || validEffects(update.effectsUnsafe()))
+                && (!update.hasAnimation() || validAnimation(update.animationUnsafe()))
+                && (!update.hasRoaming() || validRoaming(update.roamingUnsafe()));
     }
 
-    private static boolean validMode(CommonV0.StateWriteMode mode) {
-        return mode == CommonV0.StateWriteMode.STATE_WRITE_MODE_FULL
-                || mode == CommonV0.StateWriteMode.STATE_WRITE_MODE_DELTA;
+    private static boolean validMode(StateWriteMode mode) {
+        return mode == StateWriteMode.STATE_WRITE_MODE_FULL
+                || mode == StateWriteMode.STATE_WRITE_MODE_DELTA;
     }
 
-    private static boolean validEntity(CommonV0.EntityRef entity) {
-        return entity != null && entity.hasEntityId() && !entity.hasPlayerId()
-                && entity.getEntityId() >= 0;
+    private static boolean validEntity(EntityRef entity) {
+        return entity != null && !entity.hasPlayerId()
+                && entity.entityId() >= 0;
     }
 
-    private static boolean validModel(PlayerStateV0.ModelSelectionState model) {
-        if (!model.hasModel() || !ModelReferenceCodec.valid(model.getModel())
-                || !model.hasTextureId() || !model.hasDisabled()) {
+    private static boolean validModel(ModelSelectionState model) {
+        if (!ModelReferenceCodec.valid(model.model())) {
             return false;
         }
-        return utf8Length(model.getTextureId()) <= MAX_TEXTURE_BYTES;
+        return utf8Length(model.textureId()) <= MAX_TEXTURE_BYTES;
     }
 
-    private static boolean validGameplay(PlayerStateV0.GameplayState state) {
-        if (state.hasExperienceLevel() && !between(state.getExperienceLevel(), 0, MAX_GAMEPLAY_VALUE)
-                || state.hasFoodLevel() && !between(state.getFoodLevel(), 0, 20)
-                || state.hasHealth() && !between(state.getHealth(), 0, MAX_GAMEPLAY_VALUE)
-                || state.hasMaxHealth() && !between(state.getMaxHealth(), 0, MAX_GAMEPLAY_VALUE)
-                || state.hasMoveXQ7() && !between(state.getMoveXQ7(), -127, 127)
-                || state.hasMoveYQ7() && !between(state.getMoveYQ7(), -127, 127)
-                || state.hasMoveZQ7() && !between(state.getMoveZQ7(), -127, 127)) {
+    private static boolean validGameplay(GameplayState state) {
+        if (state.hasExperienceLevel() && !between(state.experienceLevelUnsafe(), 0, MAX_GAMEPLAY_VALUE)
+                || state.hasFoodLevel() && !between(state.foodLevelUnsafe(), 0, 20)
+                || state.hasHealth() && !between(state.healthUnsafe(), 0, MAX_GAMEPLAY_VALUE)
+                || state.hasMaxHealth() && !between(state.maxHealthUnsafe(), 0, MAX_GAMEPLAY_VALUE)
+                || state.hasMoveXQ7() && !between(state.moveXQ7Unsafe(), -127, 127)
+                || state.hasMoveYQ7() && !between(state.moveYQ7Unsafe(), -127, 127)
+                || state.hasMoveZQ7() && !between(state.moveZQ7Unsafe(), -127, 127)) {
             return false;
         }
-        return !state.hasHealth() || !state.hasMaxHealth() || state.getHealth() <= state.getMaxHealth();
+        return !state.hasHealth() || !state.hasMaxHealth()
+                || state.healthUnsafe() <= state.maxHealthUnsafe();
     }
 
-    private static boolean validEffects(PlayerStateV0.EffectStateSet state) {
-        if (state.getEffects().length() > MAX_EFFECTS) {
+    private static boolean validEffects(EffectStateSet state) {
+        if (state.effects().size() > MAX_EFFECTS) {
             return false;
         }
         var ids = new HashSet<String>();
-        for (var effect : state.getEffects()) {
-            if (!effect.hasEffectId() || effect.getEffectId().isBlank()
-                    || utf8Length(effect.getEffectId()) > MAX_EFFECT_ID_BYTES
-                    || !effect.hasLevel() || effect.getLevel() < 0 || effect.getLevel() > 255
-                    || !ids.add(effect.getEffectId())) {
+        for (var effect : state.effects()) {
+            if (effect.effectId().isBlank()
+                    || utf8Length(effect.effectId()) > MAX_EFFECT_ID_BYTES
+                    || effect.level() < 0 || effect.level() > 255
+                    || !ids.add(effect.effectId())) {
                 return false;
             }
         }
         return true;
     }
 
-    private static boolean validAnimation(PlayerStateV0.AnimationState state) {
+    private static boolean validAnimation(AnimationState state) {
         if (state.hasStopped()) {
-            return state.getStopped();
+            return state.stopped();
         }
-        return state.hasAnimationId() && !state.getAnimationId().isBlank()
-                && utf8Length(state.getAnimationId()) <= MAX_ANIMATION_BYTES;
+        return state.hasAnimationId() && !state.animationId().isBlank()
+                && utf8Length(state.animationId()) <= MAX_ANIMATION_BYTES;
     }
 
-    private static boolean validRoaming(PlayerStateV0.RoamingState state) {
-        if (!state.hasModelKey() || state.getVariables().length() > MAX_ROAMING_VARIABLES) {
+    private static boolean validRoaming(RoamingState state) {
+        if (state.variables().size() > ProtocolLimits.MAX_ROAMING_VARIABLES) {
             return false;
         }
         var names = new HashSet<String>();
-        for (var variable : state.getVariables()) {
-            if (!variable.hasName() || variable.getName().isBlank()
-                    || utf8Length(variable.getName()) > MAX_VARIABLE_NAME_BYTES
-                    || !variable.hasValue() || !Float.isFinite(variable.getValue())
-                    || !names.add(variable.getName())) {
+        for (var variable : state.variables()) {
+            if (variable.name().isBlank()
+                    || utf8Length(variable.name())
+                    > ProtocolLimits.MAX_ROAMING_VARIABLE_NAME_BYTES
+                    || !Float.isFinite(variable.value_())
+                    || !names.add(variable.name())) {
                 return false;
             }
         }

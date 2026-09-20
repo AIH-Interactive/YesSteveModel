@@ -1,26 +1,27 @@
 package com.elfmcys.ysm.format.schema.baked.model;
 
-import com.elfmcys.ysm.buffer.BufferType;
 import com.elfmcys.ysm.buffer.ArrayBuffer;
+import com.elfmcys.ysm.buffer.BufferType;
 import com.elfmcys.ysm.buffer.UniBuffer;
 import com.elfmcys.ysm.format.container.AssetContainerReader;
 import com.elfmcys.ysm.format.container.AssetContainerView;
 import com.elfmcys.ysm.format.container.InlineChunkReader;
+import com.elfmcys.ysm.model.domain.Hash256;
 import com.elfmcys.ysm.natives.Blake3;
+import com.elfmcys.ysm.proto.mixel.asset.model.data.GeoModel;
 import com.elfmcys.ysm.util.ProtoUtil;
-import mixel.asset.model.data.GeoModelOuterClass;
-import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
-import org.jetbrains.annotations.Nullable;
-
+import com.elfmcys.ysm.version.VersionCompatibility;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.nio.channels.SeekableByteChannel;
 import java.util.Objects;
+import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
+import org.jetbrains.annotations.Nullable;
 
 public class BakedModelView {
     private final AssetContainerView assetView;
-    private final GeoModelOuterClass.GeoModelIndex modelIndex;
-    private final byte[] modelHash;
+    private final GeoModel model;
+    private final Hash256 bakeHash;
 
     public BakedModelView(SeekableByteChannel file) throws IOException {
         assetView = AssetContainerReader.read(file);
@@ -28,17 +29,14 @@ public class BakedModelView {
             throw new IOException("Schema ID mismatch: " + assetView.getSchema());
         }
 
-        var version = new DefaultArtifactVersion(Objects.requireNonNull(
+        var version = Objects.requireNonNull(
                 assetView.getSchemaProperty(BakedModelConstant.PROP_VERSION),
-                "Version property not found"));
-        if (!BakedModelConstant.CURRENT_VERSION.equals(version)) {
+                "Version property not found");
+        if (!VersionCompatibility.isCompatible(BakedModelConstant.CURRENT_VERSION.toString(),
+                version, (current, candidate) -> new DefaultArtifactVersion(current)
+                        .equals(new DefaultArtifactVersion(candidate)))) {
             throw new UnsupportedEncodingException(String.format(
                     "Unsupported baked model version: \"%s\".", version));
-        }
-        if (!assetView.isAcceptedVersion()) {
-            throw new UnsupportedEncodingException(String.format(
-                    "Unsupported baked model container version: \"%s\".",
-                    version));
         }
 
         var manifestChunk = assetView.getChunkInfo(BakedModelConstant.MANIFEST_CHUNK_NAME);
@@ -52,30 +50,30 @@ public class BakedModelView {
             if (!(manifestData instanceof ArrayBuffer arrayBuffer)) {
                 throw new IOException("Baked model manifest is not array-backed");
             }
-            modelIndex = GeoModelOuterClass.GeoModelIndex.parseFrom(ProtoUtil.source(arrayBuffer));
+            model = GeoModel.parseFrom(ProtoUtil.source(arrayBuffer));
         }
-        var hashChunk = assetView.getChunkInfo(BakedModelConstant.MODEL_HASH_CHUNK_NAME);
+        var hashChunk = assetView.getChunkInfo(BakedModelConstant.BAKE_HASH_CHUNK_NAME);
         if (hashChunk == null) {
-            throw new IOException("Invalid model hash");
+            throw new IOException("Invalid bake hash");
         }
         try (var hashData = InlineChunkReader.readPayload(file, hashChunk, BufferType.ARRAY)) {
             if (hashData.size() != Blake3.HASH_SIZE) {
-                throw new IOException("Invalid model hash");
+                throw new IOException("Invalid bake hash");
             }
-            modelHash = new byte[Blake3.HASH_SIZE];
             if (!(hashData instanceof ArrayBuffer arrayBuffer)) {
-                throw new IOException("Baked model hash is not array-backed");
+                throw new IOException("Baked model bake hash is not array-backed");
             }
-            System.arraycopy(arrayBuffer.array(), arrayBuffer.arrayOffset(), modelHash, 0, modelHash.length);
+            bakeHash = new Hash256(arrayBuffer.array(), arrayBuffer.arrayOffset(),
+                    arrayBuffer.size());
         }
     }
 
-    public GeoModelOuterClass.GeoModelIndex modelIndex() {
-        return modelIndex;
+    public GeoModel model() {
+        return model;
     }
 
-    public byte[] modelHash() {
-        return modelHash.clone();
+    public Hash256 bakeHash() {
+        return bakeHash;
     }
 
     @Nullable

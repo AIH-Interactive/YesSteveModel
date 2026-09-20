@@ -1,29 +1,37 @@
 package com.elfmcys.ysm.util;
 
 import com.elfmcys.ysm.model.domain.Hash256;
-import us.hebi.quickbuf.RepeatedByte;
-
-import java.util.Arrays;
+import java.nio.ByteBuffer;
 
 public final class ProtoBytes {
     private ProtoBytes() {
     }
 
-    public static byte[] copy(RepeatedByte bytes) {
-        return Arrays.copyOf(bytes.array(), bytes.length());
+    public static byte[] copy(ByteBuffer bytes) {
+        var source = bytes.duplicate();
+        var result = new byte[source.remaining()];
+        source.get(result);
+        return result;
     }
 
-    public static boolean equals(byte[] expected, RepeatedByte actual) {
-        return Arrays.equals(expected, 0, expected.length,
-                actual.array(), 0, actual.length());
+    public static boolean equals(byte[] expected, ByteBuffer actual) {
+        if (expected.length != actual.remaining()) {
+            return false;
+        }
+        var source = actual.duplicate();
+        for (var value : expected) {
+            if (value != source.get()) {
+                return false;
+            }
+        }
+        return true;
     }
 
-    public static boolean equals(Hash256 expected, RepeatedByte actual) {
-        return expected.matches(actual.array(), 0, actual.length());
+    public static boolean equals(Hash256 expected, ByteBuffer actual) {
+        return expected.matches(copy(actual));
     }
 
-    /** Gives Quickbuf one owned copy instead of letting a generated setter copy twice. */
-    public static void set(RepeatedByte target, Hash256 source) {
-        target.setInternalArray(source.bytes());
+    public static ByteBuffer wrap(Hash256 source) {
+        return ByteBuffer.wrap(source.bytes());
     }
 }

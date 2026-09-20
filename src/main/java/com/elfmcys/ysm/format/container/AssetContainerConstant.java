@@ -21,6 +21,7 @@ public class AssetContainerConstant {
 
     public static final String HASH_NAME = "BLAKE3";
     public static final int HASH_SIZE = Blake3.HASH_SIZE;
+    public static final int VERIFICATION_PAYLOAD_HEADER_SIZE = HASH_SIZE + Short.BYTES;
 
     public static final String ED25519_NAME = "ED25519";
 }

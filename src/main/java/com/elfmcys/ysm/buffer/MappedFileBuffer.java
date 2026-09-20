@@ -1,88 +1,138 @@
 package com.elfmcys.ysm.buffer;
 
+import com.elfmcys.ysm.util.CleanerUtil;
 import com.elfmcys.ysm.util.UnsafeUtil;
 import org.lwjgl.system.MemoryUtil;
 
 import java.io.IOException;
+import java.lang.ref.Cleaner;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-// 只读
+/** Read-only mapped buffer with Cleaner-backed ownership. */
 class MappedFileBuffer implements NativeBuffer {
-    private final MappedByteBuffer mappedRegion;
-    private final FileChannel file;
     private final ByteBuffer data;
     private final long headPtr;
-
-    private final AtomicInteger refCounter;
+    private final Ownership ownership;
 
     MappedFileBuffer(FileChannel file, long offset, long size) throws IOException {
-        this.mappedRegion = file.map(FileChannel.MapMode.READ_ONLY, offset, size);
-        this.file = file;
-        this.data = mappedRegion.duplicate();
-        this.headPtr = MemoryUtil.memAddress(mappedRegion);
-
-        this.refCounter = new AtomicInteger(1);
+        var mapped = file.map(FileChannel.MapMode.READ_ONLY, offset, size);
+        data = mapped.duplicate();
+        headPtr = MemoryUtil.memAddress(mapped);
+        ownership = new Ownership(new Backing(mapped));
     }
 
-    private MappedFileBuffer(MappedByteBuffer mappedRegion, FileChannel file, ByteBuffer data, long headPtr, AtomicInteger refCounter) {
-        this.mappedRegion = mappedRegion;
-        this.file = file;
+    private MappedFileBuffer(ByteBuffer data, long headPtr, Ownership ownership) {
         this.data = data;
         this.headPtr = headPtr;
-        this.refCounter = refCounter;
+        this.ownership = ownership;
     }
 
-    private void checkClosed() {
-        if (refCounter.getAcquire() < 1) {
+    private void checkOpen() {
+        if (!ownership.open()) {
             throw new IllegalStateException("Buffer has been closed");
         }
     }
 
     @Override
     public NativeBuffer acquire() {
-        checkClosed();
-        refCounter.incrementAndGet();
-        return this;
+        checkOpen();
+        return new MappedFileBuffer(data.duplicate(), headPtr, ownership.acquire());
     }
 
     @Override
     public MappedFileBuffer slice(int offset, int size) {
-        checkClosed();
-
+        checkOpen();
         int currentSize = data.remaining();
         if (offset < 0 || size < 0 || offset > currentSize - size) {
             throw new IndexOutOfBoundsException();
         }
-
-        var headPtr = this.headPtr + offset;
-        var data = MemoryUtil.memByteBuffer(headPtr, size);
-        return new MappedFileBuffer(mappedRegion, file, data, headPtr, refCounter);
+        var sliced = data.slice(offset, size);
+        return new MappedFileBuffer(sliced, MemoryUtil.memAddress(sliced), ownership);
     }
 
     @Override
     public ByteBuffer nio() {
-        checkClosed();
+        checkOpen();
         return data.asReadOnlyBuffer();
     }
 
     @Override
     public long ptr() {
-        checkClosed();
+        checkOpen();
         return headPtr;
     }
 
     @Override
     public int size() {
-        return mappedRegion.remaining();
+        checkOpen();
+        return data.remaining();
     }
 
     @Override
     public void close() {
-        if (refCounter.decrementAndGet() == 0) {
-            UnsafeUtil.getUnsafe().invokeCleaner(mappedRegion);
+        ownership.close();
+    }
+
+    private static final class Backing {
+        private final MappedByteBuffer mapped;
+        private final AtomicInteger references = new AtomicInteger(1);
+
+        private Backing(MappedByteBuffer mapped) {
+            this.mapped = mapped;
+        }
+
+        private void retain() {
+            references.incrementAndGet();
+        }
+
+        private void release() {
+            if (references.decrementAndGet() == 0) {
+                UnsafeUtil.getUnsafe().invokeCleaner(mapped);
+            }
+        }
+    }
+
+    private static final class Ownership {
+        private final Backing backing;
+        private final State state;
+        private final Cleaner.Cleanable cleanable;
+
+        private Ownership(Backing backing) {
+            this.backing = backing;
+            state = new State(backing);
+            cleanable = CleanerUtil.ref(this, state, State::clean);
+        }
+
+        private boolean open() {
+            return state.open.get();
+        }
+
+        private Ownership acquire() {
+            backing.retain();
+            return new Ownership(backing);
+        }
+
+        private void close() {
+            cleanable.clean();
+        }
+    }
+
+    private static final class State {
+        private final Backing backing;
+        private final AtomicBoolean open = new AtomicBoolean(true);
+
+        private State(Backing backing) {
+            this.backing = backing;
+        }
+
+        private void clean() {
+            if (open.compareAndSet(true, false)) {
+                backing.release();
+            }
         }
     }
 }

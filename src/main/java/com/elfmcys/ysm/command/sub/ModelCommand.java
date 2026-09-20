@@ -3,8 +3,11 @@ package com.elfmcys.ysm.command.sub;
 import com.elfmcys.ysm.capability.AuthModelsCapabilityProvider;
 import com.elfmcys.ysm.capability.ModelInfoCapabilityProvider;
 import com.elfmcys.ysm.event.CommandRegistry;
-import com.elfmcys.ysm.model.source.AccessPolicy;
-import com.elfmcys.ysm.model.server.ServerModelService;
+import com.elfmcys.ysm.model.catalog.source.AccessPolicy;
+import com.elfmcys.ysm.model.domain.ModelScanWarning;
+import com.elfmcys.ysm.model.service.ServerModelService;
+import com.elfmcys.ysm.model.session.server.state.Selection;
+import com.elfmcys.ysm.network.forge.SessionProtocolHandler;
 import com.elfmcys.ysm.util.CommandUtil;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.arguments.BoolArgumentType;
@@ -12,13 +15,12 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import java.util.Collection;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
-
-import java.util.Collection;
 
 public final class ModelCommand {
     private static final String TARGETS = "targets";
@@ -53,7 +55,8 @@ public final class ModelCommand {
     private static int set(CommandContext<CommandSourceStack> context, boolean ignoreAuth)
             throws CommandSyntaxException {
         var path = StringArgumentType.getString(context, MODEL_PATH);
-        var model = ServerModelService.instance().snapshot().flatMap(snapshot -> snapshot.findPath(path));
+        var catalog = ServerModelService.instance().catalog().orElseThrow();
+        var model = catalog.findPath(path);
         if (model.isEmpty()) {
             context.getSource().sendFailure(Component.literal("Unknown or ambiguous model path: " + path));
             return 0;
@@ -61,7 +64,7 @@ public final class ModelCommand {
         var handle = model.get();
         var texture = StringArgumentType.getString(context, TEXTURE);
         if ("-".equals(texture)) {
-            var requested = handle.view().getManifest().getInfo().getSettings().getDefaultTexture();
+            var requested = handle.view().getMetadata().getSettings().defaultTexture().orElse("");
             texture = handle.view().getPlayer().getTextureNames().contains(requested)
                     ? requested : handle.view().getPlayer().getTextureNames().stream().sorted().findFirst().orElse("");
         }
@@ -70,7 +73,7 @@ public final class ModelCommand {
             return 0;
         }
 
-        var hash = handle.descriptor().modelHash();
+        var hash = handle.representation().modelId();
         var selectedTexture = texture;
         Collection<ServerPlayer> targets = EntityArgument.getPlayers(context, TARGETS);
         for (var player : targets) {
@@ -83,9 +86,12 @@ public final class ModelCommand {
                                     player.getScoreboardName() + " is not authorized for " + path));
                             return;
                         }
-                        selection.setModelAndTexture(hash, selectedTexture);
-                        selection.setMandatory(true);
-                        selection.stopAnimation(player);
+                        if (!SessionProtocolHandler.applyCommandSelection(player, selection,
+                                new Selection.Model(hash, selectedTexture), ignoreAuth)) {
+                            context.getSource().sendFailure(Component.literal(
+                                    player.getScoreboardName() + " rejected the model selection"));
+                            return;
+                        }
                     }));
         }
         return Command.SINGLE_SUCCESS;
@@ -93,11 +99,28 @@ public final class ModelCommand {
 
     private static int reload(CommandContext<CommandSourceStack> context) {
         context.getSource().sendSuccess(() -> Component.literal("Reloading model catalog..."), true);
-        ServerModelService.instance().reload(true).thenAccept(result ->
-                CommandUtil.sendAsyncFeedback(context.getSource(), Component.literal(result.success()
-                        ? "Model catalog reloaded: " + result.modelCount() + " model(s), "
-                        + result.errorCount() + " scan error(s)"
-                        : "Model catalog reload failed: " + result.message()), true));
+        ServerModelService.instance().reload().thenAccept(result -> {
+            CommandUtil.sendAsyncFeedback(context.getSource(), Component.literal(result.success()
+                    ? "Model catalog reloaded: " + result.modelCount() + " model(s), "
+                    + result.errorCount() + " scan error(s)"
+                    : "Model catalog reload failed: " + result.message()), true);
+            if (result.success() && result.warningCount() > 0) {
+                for (var kind : ModelScanWarning.Kind.values()) {
+                    var count = result.warnings().stream()
+                            .filter(warning -> warning.kind() == kind)
+                            .mapToInt(ModelScanWarning::occurrences)
+                            .sum();
+                    if (count > 0) {
+                        var key = switch (kind) {
+                            case UNKNOWN_AUDIO -> "commands.ysm.model.reload.unknown_audio";
+                            case INVALID_AUDIO -> "commands.ysm.model.reload.invalid_audio";
+                        };
+                        CommandUtil.sendAsyncFeedback(context.getSource(),
+                                Component.translatable(key, count), true);
+                    }
+                }
+            }
+        });
         return Command.SINGLE_SUCCESS;
     }
 

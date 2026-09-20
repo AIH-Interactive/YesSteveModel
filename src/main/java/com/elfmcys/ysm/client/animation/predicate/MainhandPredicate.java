@@ -8,7 +8,6 @@ import com.elfmcys.ysm.client.entity.CustomHumanoidEntity;
 import com.elfmcys.ysm.client.entity.HumanoidStateTracker;
 import com.elfmcys.ysm.client.entity.IPreviewEntity;
 import com.elfmcys.ysm.geckolib3.core.PlayState;
-import com.elfmcys.ysm.geckolib3.core.builder.LoopType;
 import com.elfmcys.ysm.geckolib3.core.event.predicate.AnimationEvent;
 import com.elfmcys.ysm.molang.runtime.ExpressionEvaluator;
 import net.minecraft.world.InteractionHand;
@@ -19,7 +18,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import org.apache.commons.lang3.StringUtils;
 
-import static com.elfmcys.ysm.client.animation.predicate.IAnimationPredicate.playCompatAnimation;
+import static com.elfmcys.ysm.client.animation.predicate.IAnimationPredicate.playAnimation;
 
 public class MainhandPredicate implements IAnimationPredicate<CustomHumanoidEntity<?>> {
     @Override
@@ -33,8 +32,6 @@ public class MainhandPredicate implements IAnimationPredicate<CustomHumanoidEnti
             return PlayState.PAUSE;
         }
 
-        int formatVer = event.getAnimatableEntity().getModelRenderTarget().info().formatVer();
-
         ItemStack mainHandItem = entity.getItemInHand(InteractionHand.MAIN_HAND);
         PlayState gunHoldAnimation = TACZCompat.playGunHoldAnimation(mainHandItem, event);
         if (gunHoldAnimation != null) {
@@ -45,12 +42,12 @@ public class MainhandPredicate implements IAnimationPredicate<CustomHumanoidEnti
             return gunHoldAnimation;
         }
         if (mainHandItem.is(Items.CROSSBOW) && CrossbowItem.isCharged(mainHandItem)) {
-            return playCompatAnimation(event, "hold_mainhand:charged_crossbow", LoopType.LOOP, formatVer);
+            return playAnimation(event, "hold_mainhand:charged_crossbow");
         }
         boolean playerIsFishing = entity instanceof Player player && player.fishing != null;
         boolean maidIsFishing = TlmClientCompat.isMaidFishing(entity);
         if (playerIsFishing || maidIsFishing) {
-            return playCompatAnimation(event, "hold_mainhand:fishing", LoopType.LOOP, formatVer);
+            return playAnimation(event, "hold_mainhand:fishing");
         }
 
         var tracker = event.getAnimatableEntity().getStateTracker();
@@ -63,7 +60,7 @@ public class MainhandPredicate implements IAnimationPredicate<CustomHumanoidEnti
         if (conditionalHold != null) {
             String name = conditionalHold.doTest(entity, InteractionHand.MAIN_HAND);
             if (StringUtils.isNoneBlank(name)) {
-                return playCompatAnimation(event, name, LoopType.LOOP, formatVer);
+                return playAnimation(event, name);
             }
         }
 

@@ -4,7 +4,7 @@ import com.elfmcys.ysm.client.compat.touhoulittlemaid.capability.YsmMaidCapabili
 import com.elfmcys.ysm.client.gui.ModelInfoScreen;
 import com.elfmcys.ysm.client.gui.PlayerModelScreen;
 import com.elfmcys.ysm.client.gui.PlayerTextureScreen;
-import com.elfmcys.ysm.client.model.ModelRenderTarget;
+import com.elfmcys.ysm.model.resource.client.ModelRenderTarget;
 import com.elfmcys.ysm.model.domain.Hash256;
 import com.elfmcys.ysm.util.ModelIdUtil;
 import com.elfmcys.ysm.util.NameUtil;

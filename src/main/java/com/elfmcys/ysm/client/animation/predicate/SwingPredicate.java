@@ -8,14 +8,13 @@ import com.elfmcys.ysm.client.compat.slashblade.SlashBladeCompat;
 import com.elfmcys.ysm.client.entity.CustomHumanoidEntity;
 import com.elfmcys.ysm.client.entity.IPreviewEntity;
 import com.elfmcys.ysm.geckolib3.core.PlayState;
-import com.elfmcys.ysm.geckolib3.core.builder.LoopType;
 import com.elfmcys.ysm.geckolib3.core.event.predicate.AnimationEvent;
 import com.elfmcys.ysm.molang.runtime.ExpressionEvaluator;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
 import org.apache.commons.lang3.StringUtils;
 
-import static com.elfmcys.ysm.client.animation.predicate.IAnimationPredicate.playCompatAnimation;
+import static com.elfmcys.ysm.client.animation.predicate.IAnimationPredicate.playAnimation;
 
 public class SwingPredicate implements IAnimationPredicate<CustomHumanoidEntity<?>> {
     @Override
@@ -31,8 +30,6 @@ public class SwingPredicate implements IAnimationPredicate<CustomHumanoidEntity<
             return playState;
         }
 
-        int formatVer = event.getAnimatableEntity().getModelRenderTarget().info().formatVer();
-
         // 拔刀剑兼容，拔刀剑的使用不受 swing 限制
         if (!entity.isSleeping() && SlashBladeCompat.isSlashBladeItem(entity.getItemInHand(InteractionHand.MAIN_HAND))) {
             // 起手阻止后续原挥剑动画
@@ -43,7 +40,7 @@ public class SwingPredicate implements IAnimationPredicate<CustomHumanoidEntity<
             String animationName = SlashBladeCompat.getAnimationName(event);
             if (StringUtils.isNoneBlank(animationName)) {
                 if (event.getAnimatableEntity().getAnimation(animationName) != null) {
-                    return playCompatAnimation(event, animationName, LoopType.PLAY_ONCE, formatVer);
+                    return playAnimation(event, animationName);
                 }
                 return PlayState.CONTINUE;
             }
@@ -60,11 +57,11 @@ public class SwingPredicate implements IAnimationPredicate<CustomHumanoidEntity<
             if (conditionalSwing != null) {
                 String name = conditionalSwing.doTest(entity, entity.swingingArm);
                 if (StringUtils.isNoneBlank(name)) {
-                    return playCompatAnimation(event, name, LoopType.PLAY_ONCE, formatVer);
+                    return playAnimation(event, name);
                 }
             }
             String defaultSwing = (entity.swingingArm == InteractionHand.MAIN_HAND) ? "swing_hand" : "swing_offhand";
-            return playCompatAnimation(event, defaultSwing, LoopType.PLAY_ONCE, formatVer);
+            return playAnimation(event, defaultSwing);
         }
         return PlayState.CONTINUE;
     }

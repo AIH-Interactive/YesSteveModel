@@ -1,8 +1,7 @@
 package com.elfmcys.ysm.network.session;
 
-/** Client preference for selecting the one remote player-state authority. */
+/** Client preference for the one model/catalog authority. */
 public enum SessionMode {
     AUTO,
-    BACKEND,
-    LOCAL_ONLY
+    LOCAL
 }

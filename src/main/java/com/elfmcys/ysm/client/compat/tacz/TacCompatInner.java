@@ -2,12 +2,14 @@ package com.elfmcys.ysm.client.compat.tacz;
 
 import com.elfmcys.ysm.client.animation.condition.ConditionTAC;
 import com.elfmcys.ysm.client.entity.CustomHumanoidEntity;
+import com.elfmcys.ysm.client.model.locator.PlayerLocator;
 import com.elfmcys.ysm.geckolib3.core.PlayState;
 import com.elfmcys.ysm.geckolib3.core.builder.LoopType;
 import com.elfmcys.ysm.geckolib3.core.event.predicate.AnimationEvent;
+import com.elfmcys.ysm.geckolib3.geo.GeoRenderData;
 import com.elfmcys.ysm.geckolib3.model.AnimatableEntity;
-import com.elfmcys.ysm.geckolib3.model.AnimatedGeoModel;
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.math.Axis;
 import com.tacz.guns.api.TimelessAPI;
 import com.tacz.guns.api.client.gameplay.IClientPlayerGunOperator;
 import com.tacz.guns.api.entity.IGunOperator;
@@ -18,10 +20,14 @@ import com.tacz.guns.client.model.functional.ShellRender;
 import com.tacz.guns.resource.index.CommonGunIndex;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.entity.ItemRenderer;
+import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Pose;
+import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import net.minecraftforge.common.MinecraftForge;
 import org.apache.commons.lang3.StringUtils;
@@ -45,33 +51,32 @@ class TacCompatInner {
         return false;
     }
 
-    static void renderOffhandGun(ItemStack heldItem, AnimatedGeoModel geoModel, LivingEntity player, PoseStack poseStack, int packedLight, float partialTicks) {
+    static void renderOffhandGun(ItemStack heldItem, GeoRenderData data, LivingEntity player, PoseStack poseStack, MultiBufferSource buffer, int packedLight) {
         IGun gun = IGun.getIGunOrNull(heldItem);
         if (gun == null) {
             return;
         }
-        /*
+
         TimelessAPI.getCommonGunIndex(gun.getGunId(heldItem)).ifPresent(index -> {
             String weaponType = index.getType();
             ItemRenderer renderer = Minecraft.getInstance().getItemRenderer();
-            if (isType(weaponType, GunTabType.PISTOL) && !geoModel.tacPistolBones().isEmpty()) {
-                RenderUtils.prepMatrixForLocator(poseStack, geoModel.tacPistolBones());
-                poseStack.translate(0, -0.125, 0);
-                poseStack.scale(0.65f, 0.65f, 0.65f);
-                poseStack.mulPose(Axis.YP.rotationDegrees(-90.0F));
-                poseStack.mulPose(Axis.ZP.rotationDegrees(90.0F));
-                MultiBufferSource buffer = Minecraft.getInstance().renderBuffers().bufferSource();
-                renderer.renderStatic(heldItem, ItemDisplayContext.FIXED, packedLight, OverlayTexture.NO_OVERLAY, poseStack, buffer, player.level(), player.getId());
+            if (isType(weaponType, GunTabType.PISTOL)) {
+                data.modelState.visitLocatorGroup(PlayerLocator.get().pistol, poseStack, locatorPose -> {
+                    locatorPose.translate(0, -0.125, 0);
+                    locatorPose.scale(0.65f, 0.65f, 0.65f);
+                    locatorPose.mulPose(Axis.YP.rotationDegrees(-90.0F));
+                    locatorPose.mulPose(Axis.ZP.rotationDegrees(90.0F));
+                    renderer.renderStatic(heldItem, ItemDisplayContext.FIXED, packedLight, OverlayTexture.NO_OVERLAY, locatorPose, buffer, player.level(), player.getId());
+                });
             }
-            if (!isType(weaponType, GunTabType.PISTOL) && !geoModel.tacRifleBones().isEmpty()) {
-                RenderUtils.prepMatrixForLocator(poseStack, geoModel.tacRifleBones());
-                poseStack.scale(0.65f, 0.65f, 0.65f);
-                poseStack.mulPose(Axis.YP.rotationDegrees(-180.0F));
-                MultiBufferSource buffer = Minecraft.getInstance().renderBuffers().bufferSource();
-                renderer.renderStatic(heldItem, ItemDisplayContext.FIXED, packedLight, OverlayTexture.NO_OVERLAY, poseStack, buffer, player.level(), player.getId());
+            if (!isType(weaponType, GunTabType.PISTOL)) {
+                data.modelState.visitLocatorGroup(PlayerLocator.get().rifle, poseStack, locatorPose -> {
+                    locatorPose.scale(0.65f, 0.65f, 0.65f);
+                    locatorPose.mulPose(Axis.YP.rotationDegrees(-180.0F));
+                    renderer.renderStatic(heldItem, ItemDisplayContext.FIXED, packedLight, OverlayTexture.NO_OVERLAY, locatorPose, buffer, player.level(), player.getId());
+                });
             }
         });
-        */
     }
 
     static PlayState playGrenadeAnimation(AnimationEvent<? extends AnimatableEntity<? extends LivingEntity>> event, InteractionHand hand) {

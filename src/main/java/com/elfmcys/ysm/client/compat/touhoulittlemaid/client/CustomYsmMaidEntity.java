@@ -1,7 +1,7 @@
 package com.elfmcys.ysm.client.compat.touhoulittlemaid.client;
 
 import com.elfmcys.ysm.client.entity.CustomHumanoidEntity;
-import com.elfmcys.ysm.client.model.ModelRenderTargetLease;
+import com.elfmcys.ysm.model.resource.client.ResourceLease;
 import com.elfmcys.ysm.molang.runtime.Struct;
 import com.github.tartaricacid.touhoulittlemaid.api.entity.IMaid;
 import com.github.tartaricacid.touhoulittlemaid.client.resource.pojo.MaidModelInfo;
@@ -33,8 +33,8 @@ public class CustomYsmMaidEntity extends CustomHumanoidEntity<EntityMaid> implem
     }
 
     @Override
-    protected @NotNull ResourceHolder createResourceHolder(ModelRenderTargetLease lease, boolean isFallback) {
-        return new HumanoidResourceHolder(lease, isFallback, true, true, 30 * 20);
+    protected @NotNull ResourceHolder createResourceHolder(ResourceLease lease, boolean isFallback) {
+        return new HumanoidResourceHolder(lease, isFallback);
     }
 
     @Override

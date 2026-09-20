@@ -1,6 +1,7 @@
 package com.elfmcys.ysm.format.schema.file;
 
 import com.elfmcys.ysm.buffer.BufferType;
+import com.elfmcys.ysm.format.AssetLoadException;
 import com.elfmcys.ysm.format.container.AssetContainerView;
 import com.elfmcys.ysm.natives.image.Image;
 import com.elfmcys.ysm.natives.image.ImageSource;
@@ -10,9 +11,11 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.function.BooleanSupplier;
 
 /** Reads one immutable image chunk from a model file or the shared chunk cache. */
 public final class ChunkImageSource implements ImageSource {
+    private final @Nullable BooleanSupplier cancelled;
     private final ChunkDataSource source;
     private final AssetContainerView.ChunkInfo chunk;
     private final @Nullable Image.Format format;
@@ -25,14 +28,30 @@ public final class ChunkImageSource implements ImageSource {
                                         AssetContainerView.ChunkInfo chunk,
                                         Image.Format format, int width, int height) throws IOException {
         var metadata = blobMetadata(chunk, format, width, height);
-        return new ChunkImageSource(source, chunk, metadata.format(), metadata.width(), metadata.height(),
+        return new ChunkImageSource(null, source, chunk, metadata.format(), metadata.width(), metadata.height(),
                 format.name(), false);
+    }
+
+    public static ChunkImageSource blob(BooleanSupplier cancelled, ChunkDataSource source,
+                                        AssetContainerView.ChunkInfo chunk,
+                                        Image.Format format, int width, int height) throws IOException {
+        var metadata = blobMetadata(chunk, format, width, height);
+        return new ChunkImageSource(Objects.requireNonNull(cancelled, "cancelled"), source, chunk,
+                metadata.format(), metadata.width(), metadata.height(), format.name(), false);
     }
 
     public static ChunkImageSource named(ChunkDataSource source,
                                          AssetContainerView.ChunkInfo chunk) throws IOException {
         var metadata = namedMetadata(chunk);
-        return new ChunkImageSource(source, chunk, metadata.format(), metadata.width(), metadata.height(),
+        return new ChunkImageSource(null, source, chunk, metadata.format(), metadata.width(), metadata.height(),
+                metadata.format().name(), true);
+    }
+
+    public static ChunkImageSource named(BooleanSupplier cancelled, ChunkDataSource source,
+                                         AssetContainerView.ChunkInfo chunk) throws IOException {
+        var metadata = namedMetadata(chunk);
+        return new ChunkImageSource(Objects.requireNonNull(cancelled, "cancelled"), source, chunk,
+                metadata.format(), metadata.width(), metadata.height(),
                 metadata.format().name(), true);
     }
 
@@ -42,13 +61,15 @@ public final class ChunkImageSource implements ImageSource {
         var declaredEncoding = expectedEncoding != null
                 ? expectedEncoding
                 : chunk.encoding().isEmpty() ? null : chunk.encoding();
-        return new ChunkImageSource(source, chunk, null, 0, 0,
+        return new ChunkImageSource(null, source, chunk, null, 0, 0,
                 declaredEncoding, expectedEncoding != null);
     }
 
-    private ChunkImageSource(ChunkDataSource source, AssetContainerView.ChunkInfo chunk,
+    private ChunkImageSource(@Nullable BooleanSupplier cancelled, ChunkDataSource source,
+                              AssetContainerView.ChunkInfo chunk,
                               @Nullable Image.Format format, int width, int height,
                               @Nullable String expectedEncoding, boolean chunkEncodingRequired) {
+        this.cancelled = cancelled;
         this.source = Objects.requireNonNull(source, "source");
         this.chunk = copy(Objects.requireNonNull(chunk, "chunk"));
         this.format = format;
@@ -61,16 +82,25 @@ public final class ChunkImageSource implements ImageSource {
     @Override
     public Image open() throws IOException {
         validateEncoding();
-        var data = source.readPayload(chunk, BufferType.NATIVE);
+        var data = cancelled == null
+                ? source.readPayload(chunk, BufferType.NATIVE)
+                : source.readPayload(cancelled, chunk, BufferType.NATIVE);
         if (format != null) {
             return new Image(format, width, height, data);
         }
         try (data) {
-            var image = Image.probe(data);
+            final Image image;
+            try {
+                image = Image.probe(data);
+            } catch (IOException error) {
+                throw AssetLoadException.content(
+                        "Failed to probe image chunk: " + chunk.type(), error);
+            }
             if (expectedEncoding != null
                     && !image.format().name().equalsIgnoreCase(expectedEncoding)) {
                 image.close();
-                throw new IOException("Image format does not match chunk encoding: " + chunk.type());
+                throw AssetLoadException.content(
+                        "Image format does not match chunk encoding: " + chunk.type());
             }
             return image;
         }
@@ -91,13 +121,13 @@ public final class ChunkImageSource implements ImageSource {
     static KnownImageMetadata namedMetadata(AssetContainerView.ChunkInfo chunk) throws IOException {
         var encoding = chunk.encoding();
         if (encoding.isEmpty()) {
-            throw new IOException("Image chunk has no encoding: " + chunk.type());
+            throw AssetLoadException.content("Image chunk has no encoding: " + chunk.type());
         }
         final Image.Format format;
         try {
             format = Image.Format.valueOf(encoding.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException error) {
-            throw new IOException(String.format(Locale.ROOT,
+            throw AssetLoadException.content(String.format(Locale.ROOT,
                     "Unknown image encoding for chunk %s: %s", chunk.type(), encoding), error);
         }
         var width = (chunk.decodeSize() >>> 16) & 0xFFFF;
@@ -109,7 +139,7 @@ public final class ChunkImageSource implements ImageSource {
     private static void validateDimensions(AssetContainerView.ChunkInfo chunk,
                                            int width, int height) throws IOException {
         if (width <= 0 || height <= 0) {
-            throw new IOException(String.format(Locale.ROOT,
+            throw AssetLoadException.content(String.format(Locale.ROOT,
                     "Invalid image dimensions for chunk %s: %dx%d", chunk.type(), width, height));
         }
     }
@@ -120,12 +150,13 @@ public final class ChunkImageSource implements ImageSource {
         var actualEncoding = chunk.encoding();
         if (actualEncoding.isEmpty()) {
             if (required) {
-                throw new IOException("Image chunk has no encoding: " + chunk.type());
+                throw AssetLoadException.content(
+                        "Image chunk has no encoding: " + chunk.type());
             }
             return;
         }
         if (expectedEncoding != null && !actualEncoding.equalsIgnoreCase(expectedEncoding)) {
-            throw new IOException(String.format(Locale.ROOT,
+            throw AssetLoadException.content(String.format(Locale.ROOT,
                     "Image encoding conflict for chunk %s: expected %s, found %s",
                     chunk.type(), expectedEncoding, actualEncoding));
         }

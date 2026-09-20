@@ -1,6 +1,6 @@
 package com.elfmcys.ysm.util;
 
-import com.elfmcys.ysm.client.model.ModelRenderTarget;
+import com.elfmcys.ysm.model.resource.client.ModelRenderTarget;
 import net.minecraft.network.chat.Component;
 
 public final class NameUtil {

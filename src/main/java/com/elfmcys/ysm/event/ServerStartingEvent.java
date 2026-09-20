@@ -1,7 +1,7 @@
 package com.elfmcys.ysm.event;
 
 import com.elfmcys.ysm.YesSteveModel;
-import com.elfmcys.ysm.model.server.ServerModelService;
+import com.elfmcys.ysm.model.service.ServerModelService;
 import net.minecraftforge.event.server.ServerAboutToStartEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;

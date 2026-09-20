@@ -1,24 +1,36 @@
 package com.elfmcys.ysm.format.parser;
 
+import com.elfmcys.ysm.buffer.ArrayBuffer;
 import com.elfmcys.ysm.buffer.NativeBuffer;
 import com.elfmcys.ysm.format.vfs.Directory;
 import com.elfmcys.ysm.format.vfs.VirtualFileSystem;
 import com.elfmcys.ysm.model.domain.Hash256;
 import com.elfmcys.ysm.natives.Blake3;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-
+import java.io.IOException;
 import java.net.URISyntaxException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ModelParserTest {
     @Test
@@ -106,6 +118,7 @@ class ModelParserTest {
             expectedTypes.put("functions/nested/extra.molang", "molang-func");
             expectedTypes.put("lang/en_us.json", "language");
             expectedTypes.put("lang/nested/zh_cn.json", "language");
+            expectedTypes.put("sounds/ignored.ogg", "sound");
             expectedTypes.put("icon.bin", "icon");
             expectedTypes.put("thumbnail.bin", "thumbnail");
 
@@ -119,7 +132,7 @@ class ModelParserTest {
             vfs.add("ignored/texture.png", "not read");
             vfs.add("functions/ignored.txt", "not read");
             vfs.add("lang/ignored.lang", "not read");
-            vfs.add("sounds/ignored.ogg", "not read");
+            vfs.add("sounds/ignored.ogg", "unknown audio");
 
             var actual = ModelParser.scanModelHash(vfs);
 
@@ -157,26 +170,281 @@ class ModelParserTest {
                 "/assets/ysm/builtin/wine_fox/22_elf/ysm.json"));
         var sourceDirectory = Path.of(manifest.toURI()).getParent();
 
-        Hash256 scanned;
+        CapturedModel captured;
         try (var vfs = new Directory(sourceDirectory)) {
-            scanned = ModelParser.scanModelHash(vfs);
+            captured = ModelParser.capture(vfs);
         }
 
-        Path output;
-        try (var vfs = new Directory(sourceDirectory)) {
-            output = ModelParser.parse(vfs, outputDirectory,
+        try (captured) {
+            var result = ModelParser.compile(captured.data().asVirtualFileSystem(), outputDirectory,
                     DefaultAnimationFilter.keepAll());
+
+            assertEquals(captured.modelId(), result.modelHash());
+            assertEquals(captured.modelId() + ".mxc", result.stagedContainer().getFileName().toString());
+        }
+    }
+
+    @Test
+    void rawUnknownAudioIsReportedAndParticipatesInIdentity() throws IOException {
+        var validAudio = Files.readAllBytes(fixtureRoot().resolve("opus-under.ogg"));
+        var invalidAudio = validAudio.clone();
+        invalidAudio[invalidAudio.length - 1] ^= 1;
+        try (var firstVfs = legacyRawFixture(new byte[]{1, 2, 3});
+             var secondVfs = legacyRawFixture(new byte[]{1, 2, 4});
+             var invalidVfs = legacyRawFixture(invalidAudio);
+             var supportedVfs = legacyRawFixture(validAudio);
+             var first = ModelParser.capture(firstVfs);
+             var second = ModelParser.capture(secondVfs);
+             var invalid = ModelParser.capture(invalidVfs);
+             var supported = ModelParser.capture(supportedVfs)) {
+            assertEquals(List.of(new RawModelDiagnostic(
+                    RawModelDiagnostic.Kind.UNKNOWN_AUDIO)), first.diagnostics());
+            assertEquals(first.diagnostics(), second.diagnostics());
+            assertFalse(first.modelId().equals(second.modelId()));
+            assertEquals(List.of(new RawModelDiagnostic(
+                    RawModelDiagnostic.Kind.INVALID_AUDIO)), invalid.diagnostics());
+            assertTrue(supported.diagnostics().isEmpty());
+        }
+    }
+
+    @Test
+    void captureCopiesBorrowedFilesFreezesDirectoriesAndNeverFallsBack(@TempDir Path sourceDirectory)
+            throws Exception {
+        var original = new LinkedHashMap<String, byte[]>();
+        original.put("info.json", "{}".getBytes(StandardCharsets.UTF_8));
+        original.put("main.json", "original main".getBytes(StandardCharsets.UTF_8));
+        original.put("arm.json", "original arm".getBytes(StandardCharsets.UTF_8));
+        original.put("main.animation.json", "original animation".getBytes(StandardCharsets.UTF_8));
+        original.put("skin.png", new byte[]{1, 2, 3, 4});
+        original.put("unused.bin", new byte[]{5, 6, 7, 8});
+        for (var entry : original.entrySet()) {
+            Files.write(sourceDirectory.resolve(entry.getKey()), entry.getValue());
         }
 
-        assertEquals(scanned + ".mxc", output.getFileName().toString());
+        try (var source = new Directory(sourceDirectory)) {
+            var captured = ModelParser.capture(source);
+            var capturedVfs = captured.data().asVirtualFileSystem();
+            assertTrue(source.hasFile("info.json"));
+
+            Files.writeString(sourceDirectory.resolve("main.json"), "changed");
+            Files.writeString(sourceDirectory.resolve("new.json"), "new");
+            Files.createDirectory(sourceDirectory.resolve("new-directory"));
+            Files.delete(sourceDirectory.resolve("unused.bin"));
+
+            assertFalse(Arrays.asList(capturedVfs.listFiles()).contains("new.json"));
+            assertFalse(Arrays.asList(capturedVfs.listDirectories()).contains("new-directory"));
+            assertArrayEquals(original.get("main.json"), bytes(capturedVfs.getFile("main.json")));
+            assertTrue(Objects.requireNonNull(capturedVfs.getFile("main.json")).nio().isReadOnly());
+            assertEquals(captured.modelId(), ModelParser.scanModelHash(capturedVfs));
+            assertThrows(IllegalStateException.class, () -> capturedVfs.getFile("unused.bin"));
+            assertNull(capturedVfs.getFile("new.json"));
+
+            captured.close();
+            assertDoesNotThrow(captured::close);
+            assertThrows(IllegalStateException.class, captured.data()::asVirtualFileSystem);
+            assertTrue(source.hasFile("info.json"));
+        }
+    }
+
+    @Test
+    void captureClosesEveryOwnedCopyExactlyOnce() {
+        try (var delegate = legacyMemoryVfs()) {
+            var source = new TrackingCopyVfs(delegate);
+            var captured = ModelParser.capture(source);
+            var copied = source.copyCount.get();
+            assertTrue(copied > 0);
+
+            captured.close();
+            captured.close();
+
+            assertEquals(copied, source.closeCount.get());
+            assertDoesNotThrow(() -> Objects.requireNonNull(delegate.getFile("info.json")).size());
+        }
+    }
+
+    @Test
+    void canonicalInputIsSortedUnsignedUtf8AndEncodedLittleEndian() {
+        var canonicalizer = new ModelHashCanonicalizer();
+        canonicalizer.add("model", "é.json", new byte[]{3});
+        canonicalizer.add("animation", "a.json", new byte[]{1});
+        canonicalizer.add("model", "z.json", new byte[]{2});
+
+        var expected = ByteBuffer.allocate(4
+                        + recordSize("animation", "a.json", 1)
+                        + recordSize("model", "z.json", 1)
+                        + recordSize("model", "é.json", 1))
+                .order(ByteOrder.LITTLE_ENDIAN);
+        expected.putInt(3);
+        putRecord(expected, "animation", "a.json", new byte[]{1});
+        putRecord(expected, "model", "z.json", new byte[]{2});
+        putRecord(expected, "model", "é.json", new byte[]{3});
+
+        try (var encoded = ArrayBuffer.move(expected.array())) {
+            assertArrayEquals(Blake3.computeHash(encoded), canonicalizer.aggregate());
+        }
+
+        assertDoesNotThrow(() -> canonicalizer.add("model", "z.json", new byte[]{2}));
+        assertThrows(IllegalArgumentException.class,
+                () -> canonicalizer.add("model", "z.json", new byte[]{9}));
+        assertThrows(IllegalArgumentException.class,
+                () -> canonicalizer.add("mødel", "valid.json", new byte[0]));
+        assertThrows(IllegalArgumentException.class,
+                () -> canonicalizer.add("model", "../invalid.json", new byte[0]));
     }
 
     private static Hash256 expectedHash(MemoryVfs vfs, Map<String, String> expectedTypes) {
         var canonicalizer = new ModelHashCanonicalizer();
         for (var entry : expectedTypes.entrySet()) {
-            canonicalizer.add(entry.getValue(), entry.getKey(), Blake3.computeHash(vfs.file(entry.getKey())));
+            canonicalizer.add(entry.getValue(), entry.getKey(), vfs.file(entry.getKey()));
         }
         return new Hash256(canonicalizer.aggregate());
+    }
+
+    private static MemoryVfs legacyMemoryVfs() {
+        var vfs = new MemoryVfs();
+        vfs.add("info.json", "{}");
+        vfs.add("main.json", "invalid model");
+        vfs.add("arm.json", "invalid model");
+        vfs.add("main.animation.json", "invalid animation");
+        vfs.add("skin.png", "invalid image");
+        return vfs;
+    }
+
+    private static MemoryVfs legacyRawFixture(byte[] sound) {
+        var vfs = legacyMemoryVfs();
+        vfs.add("sounds/model-audio.bin", sound);
+        return vfs;
+    }
+
+    private static byte[] bytes(NativeBuffer buffer) {
+        var result = new byte[Objects.requireNonNull(buffer, "buffer").size()];
+        buffer.nio().get(result);
+        return result;
+    }
+
+    private static Path fixtureRoot() {
+        var configured = System.getenv("YSM_AUDIO_FIXTURE_DIR");
+        if (configured == null || configured.isBlank()) {
+            throw new IllegalStateException(
+                    "YSM_AUDIO_FIXTURE_DIR must identify the contract fixture directory");
+        }
+        return Path.of(configured).toAbsolutePath().normalize();
+    }
+
+    private static int recordSize(String role, String path, int contentSize) {
+        return Integer.BYTES + role.getBytes(StandardCharsets.UTF_8).length
+                + Integer.BYTES + path.getBytes(StandardCharsets.UTF_8).length
+                + Long.BYTES + contentSize;
+    }
+
+    private static void putRecord(ByteBuffer target, String role, String path, byte[] content) {
+        var roleBytes = role.getBytes(StandardCharsets.UTF_8);
+        var pathBytes = path.getBytes(StandardCharsets.UTF_8);
+        target.putInt(roleBytes.length).put(roleBytes);
+        target.putInt(pathBytes.length).put(pathBytes);
+        target.putLong(content.length).put(content);
+    }
+
+    private static final class TrackingCopyVfs implements VirtualFileSystem {
+        private final MemoryVfs delegate;
+        private final AtomicInteger copyCount = new AtomicInteger();
+        private final AtomicInteger closeCount = new AtomicInteger();
+
+        private TrackingCopyVfs(MemoryVfs delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public String[] listFiles(String path) {
+            return delegate.listFiles(path);
+        }
+
+        @Override
+        public String[] listDirectories(String path) {
+            return delegate.listDirectories(path);
+        }
+
+        @Override
+        public boolean hasFile(String fileName) {
+            return delegate.hasFile(fileName);
+        }
+
+        @Override
+        public NativeBuffer getFile(String fileName) {
+            var file = delegate.getFile(fileName);
+            return file == null ? null : new TrackingBorrow(file, copyCount, closeCount);
+        }
+    }
+
+    private record TrackingBorrow(NativeBuffer underlying, AtomicInteger copyCount,
+                                  AtomicInteger closeCount) implements NativeBuffer {
+        @Override
+        public long ptr() {
+            return underlying.ptr();
+        }
+
+        @Override
+        public NativeBuffer slice(int offset, int size) {
+            return underlying.slice(offset, size);
+        }
+
+        @Override
+        public NativeBuffer acquire() {
+            return underlying.acquire();
+        }
+
+        @Override
+        public NativeBuffer copy() {
+            copyCount.incrementAndGet();
+            return new TrackingOwner(underlying.copy(), closeCount);
+        }
+
+        @Override
+        public ByteBuffer nio() {
+            return underlying.nio();
+        }
+
+        @Override
+        public int size() {
+            return underlying.size();
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private record TrackingOwner(NativeBuffer underlying, AtomicInteger closeCount) implements NativeBuffer {
+        @Override
+        public long ptr() {
+            return underlying.ptr();
+        }
+
+        @Override
+        public NativeBuffer slice(int offset, int size) {
+            return underlying.slice(offset, size);
+        }
+
+        @Override
+        public NativeBuffer acquire() {
+            return underlying.acquire();
+        }
+
+        @Override
+        public ByteBuffer nio() {
+            return underlying.nio();
+        }
+
+        @Override
+        public int size() {
+            return underlying.size();
+        }
+
+        @Override
+        public void close() {
+            closeCount.incrementAndGet();
+            underlying.close();
+        }
     }
 
     private static final class MemoryVfs implements VirtualFileSystem, AutoCloseable {
@@ -184,7 +452,10 @@ class ModelParserTest {
         private final Set<String> readFiles = new LinkedHashSet<>();
 
         void add(String path, String content) {
-            var data = content.getBytes(StandardCharsets.UTF_8);
+            add(path, content.getBytes(StandardCharsets.UTF_8));
+        }
+
+        void add(String path, byte[] data) {
             var buffer = NativeBuffer.allocate(data.length);
             buffer.nio().put(data);
             files.put(normalize(path), buffer);

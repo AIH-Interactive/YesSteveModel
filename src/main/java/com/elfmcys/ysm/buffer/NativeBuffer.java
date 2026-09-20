@@ -5,6 +5,7 @@ import com.elfmcys.ysm.util.ScopeGuard;
 import org.lwjgl.system.MemoryUtil;
 
 import java.io.IOException;
+import java.lang.ref.Reference;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 
@@ -26,7 +27,13 @@ public interface NativeBuffer extends UniBuffer {
     default NativeBuffer copy() {
         var size = size();
         try (var bufScope = allocateWithScope(size)) {
-            MemoryUtil.memCopy(ptr(), bufScope.get().ptr(), size);
+            var target = bufScope.get();
+            try {
+                MemoryUtil.memCopy(ptr(), target.ptr(), size);
+            } finally {
+                Reference.reachabilityFence(this);
+                Reference.reachabilityFence(target);
+            }
             return bufScope.release();
         }
     }
@@ -83,10 +90,18 @@ public interface NativeBuffer extends UniBuffer {
 
     static NativeBuffer copyOf(ByteBuffer data) {
         var result = allocate(data.remaining());
-        if (data.isDirect()) {
-            MemoryUtil.memCopy(MemoryUtil.memAddress(data), result.ptr(), result.size());
-        } else {
-            result.nio().put(data.duplicate());
+        try {
+            if (data.isDirect()) {
+                MemoryUtil.memCopy(MemoryUtil.memAddress(data), result.ptr(), result.size());
+            } else {
+                result.nio().put(data.duplicate());
+            }
+        } catch (RuntimeException | Error error) {
+            result.close();
+            throw error;
+        } finally {
+            Reference.reachabilityFence(data);
+            Reference.reachabilityFence(result);
         }
         return result;
     }

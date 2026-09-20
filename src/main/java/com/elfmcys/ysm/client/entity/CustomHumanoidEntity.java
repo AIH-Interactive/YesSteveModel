@@ -1,10 +1,13 @@
 package com.elfmcys.ysm.client.entity;
 
+import com.elfmcys.ysm.model.service.ClientModelService;
+import com.elfmcys.ysm.model.resource.client.ModelRenderTarget;
+import com.elfmcys.ysm.model.resource.client.PlayerModelVariant;
+import com.elfmcys.ysm.model.resource.client.ResourceLease;
+
 import com.elfmcys.ysm.client.animation.condition.ConditionManager;
 import com.elfmcys.ysm.client.animation.molang.MolangEventWrapper;
-import com.elfmcys.ysm.client.model.*;
-import com.elfmcys.ysm.client.texture.CustomTextureManager;
-import com.elfmcys.ysm.client.texture.TextureHolder;
+import com.elfmcys.ysm.client.model.locator.PlayerLocator;
 import com.elfmcys.ysm.geckolib3.core.builder.Animation;
 import com.elfmcys.ysm.geckolib3.core.builder.controller.AnimationControllerData;
 import com.elfmcys.ysm.geckolib3.core.event.predicate.AnimationEvent;
@@ -17,7 +20,6 @@ import com.elfmcys.ysm.model.domain.Hash256;
 import it.unimi.dsi.fastutil.booleans.BooleanArrayList;
 import it.unimi.dsi.fastutil.booleans.BooleanList;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
-import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.LivingEntity;
 import org.jetbrains.annotations.NotNull;
@@ -25,8 +27,6 @@ import org.jetbrains.annotations.Nullable;
 import org.joml.Math;
 import org.joml.Vector2f;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Objects;
 
 /**
@@ -53,7 +53,11 @@ public abstract class CustomHumanoidEntity<T extends LivingEntity> extends Custo
     private boolean tacGunAnimationNeedReload = false;
 
     protected CustomHumanoidEntity(T entity, boolean asyncUpdate) {
-        super(entity, asyncUpdate);
+        this(entity, asyncUpdate, new EntityModelBinding());
+    }
+
+    CustomHumanoidEntity(T entity, boolean asyncUpdate, EntityModelBinding modelBinding) {
+        super(entity, asyncUpdate, modelBinding);
         updateHandlerArgs.size(1);
     }
 
@@ -227,14 +231,10 @@ public abstract class CustomHumanoidEntity<T extends LivingEntity> extends Custo
         var variant = isModelPresent() ? playerResources.variants().get(textureName) : null;
         if (variant == null) {
             variant = playerResources.defaultVariant();
-            if (isModelPresent()) {
-                textureName = playerResources.defaultTextureName();
-            }
         }
         if (variant != modelVariant) {
             waitForAsyncUpdate();
             modelVariant = variant;
-            ((HumanoidResourceHolder) getResourceHolder()).setTexture(variant.texture());
             if (replaceModel) {
                 setGeoModelInplace(variant.mainModel());
             }
@@ -265,7 +265,7 @@ public abstract class CustomHumanoidEntity<T extends LivingEntity> extends Custo
     @NotNull
     @SuppressWarnings("unchecked")
     public ResourceLocation getTextureLocation() {
-        return ((HumanoidResourceHolder) getResourceHolder()).textureHolder.id().get();
+        return getModelRenderTarget().textureId();
     }
 
     @Nullable
@@ -275,16 +275,16 @@ public abstract class CustomHumanoidEntity<T extends LivingEntity> extends Custo
 
     @Override
     public float getHeightScale() {
-        return getModelRenderTarget().info().properties().heightScale();
+        return getModelRenderTarget().info().getPlayerSettings().heightScale();
     }
 
     @Override
     public float getWidthScale() {
-        return getModelRenderTarget().info().properties().widthScale();
+        return getModelRenderTarget().info().getPlayerSettings().widthScale();
     }
 
     public boolean renderLayersFirst() {
-        return getModelRenderTarget().info().properties().renderLayersFirst();
+        return getModelRenderTarget().info().getPlayerSettings().renderLayersFirst();
     }
 
     public boolean isTacGunAnimationNeedReload() {
@@ -296,33 +296,9 @@ public abstract class CustomHumanoidEntity<T extends LivingEntity> extends Custo
     }
 
     protected class HumanoidResourceHolder extends ResourceHolder {
-        public TextureHolder textureHolder;
-        private final List<TextureHolder> textureHolders;
-        private final int releaseDelay;
-
-        public HumanoidResourceHolder(ModelRenderTargetLease lease, boolean fallback, boolean registerAllTexture, boolean immediately, int releaseDelay) {
+        public HumanoidResourceHolder(ResourceLease lease, boolean fallback) {
             super(lease, fallback);
-            var model = lease.renderTarget();
-            var selectedVariant = model.playerResources().variants().get(textureName);
-            this.textureHolder = CustomTextureManager.register(selectedVariant != null ? selectedVariant.texture() : model.playerResources().defaultVariant().texture(), immediately, releaseDelay);
-            this.releaseDelay = releaseDelay;
-            if (registerAllTexture) {
-                textureHolders = new ArrayList<>();
-                for (var variant : model.playerResources().variants().values()) {
-                    textureHolders.add(CustomTextureManager.register(variant.texture(), false));
-                }
-            } else {
-                textureHolders = null;
-            }
-        }
-
-        private void setTexture(AbstractTexture texture) {
-            textureHolder = CustomTextureManager.register(texture, true, releaseDelay);
-        }
-
-        @Override
-        public boolean isLoaded() {
-            return textureHolder.id().isPresent();
         }
     }
+
 }

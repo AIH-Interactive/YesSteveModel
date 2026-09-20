@@ -56,7 +56,7 @@ if (!result.isCompatible() || !result.coverageComplete()) {
 ## 自动注册事件处理器
 
 需要监听 YSM 自有事件总线时，可用 `@YsmEventHandler` 代替类级
-`@YsmExtension` 和手动 `YesSteveModel.registerEventHandler(...)`：
+`@YsmExtension` 和手动调用模组主类的 `registerEventHandler(...)`：
 
 ```java
 @YsmEventHandler(side = Side.CLIENT)
@@ -81,7 +81,7 @@ YSM 先调用对应 `<ClassName>CompatibilityChecker.check()`：
 - 缺少生成的 checker：跳过并提示扩展把 YSM 主 JAR 加入 `annotationProcessor`。
 
 每个处理器独立失败；一个处理器的链接、构造或注册异常不会阻止其他处理器继续注册。
-`YesSteveModel.registerEventHandler(Object)` 仍保留，供确实需要自行控制实例生命周期的代码使用。
+模组主类的 `registerEventHandler(Object)` 仍保留，供确实需要自行控制实例生命周期的代码使用。
 
 自动注册目标是 YSM 的模组事件总线，不是 `MinecraftForge.EVENT_BUS`。注册发生在
 `FMLLoadCompleteEvent` 期间，因此处理器只会收到此后发布的 YSM 运行时事件，不会补收
@@ -92,7 +92,7 @@ YSM 先调用对应 `<ClassName>CompatibilityChecker.check()`：
 - `COMPATIBLE`：全部静态可见符号存在，且覆盖完整；
 - `COMPATIBLE_WITH_WARNINGS`：符号存在，但存在未知动态目标、Mixin 或不可读取的自有代码等覆盖缺口；
 - `NOT_APPLICABLE`：客户端 checker 在专用服务端上被跳过；
-- `YSM_NOT_LOADED` / `YSM_UNAVAILABLE`：未加载 YSM，或 `YesSteveModel.isAvailable()` 返回 `false`；
+- `YSM_NOT_LOADED` / `YSM_UNAVAILABLE`：未加载 YSM，或模组主类的 `isAvailable()` 返回 `false`；
 - `INCOMPATIBLE`：检测到缺失或签名不匹配；
 - `CHECK_FAILED`：manifest、运行环境或 reobf 探针本身不可信。此状态必须按不兼容处理。
 

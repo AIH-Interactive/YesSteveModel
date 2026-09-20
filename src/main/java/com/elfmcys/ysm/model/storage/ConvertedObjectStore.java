@@ -1,274 +1,139 @@
 package com.elfmcys.ysm.model.storage;
 
-import com.elfmcys.ysm.YesSteveModel;
-import com.elfmcys.ysm.format.parser.RawCompileResult;
-import com.elfmcys.ysm.model.catalog.CatalogModelLocation;
+import com.elfmcys.ysm.AssetPaths;
+import com.elfmcys.ysm.format.AssetLoadException;
+import com.elfmcys.ysm.model.catalog.source.CatalogModelLocation;
 import com.elfmcys.ysm.model.domain.Hash256;
+import com.elfmcys.ysm.model.domain.ModelFileIdentity;
+import com.elfmcys.ysm.format.parser.RawCompileResult;
+import com.elfmcys.ysm.format.schema.model.ModelFileIdentityReader;
 
 import java.io.IOException;
+import java.nio.channels.FileChannel;
+import java.nio.file.FileSystemException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.BasicFileAttributes;
-import java.time.Duration;
-import java.time.Instant;
+import java.nio.file.StandardOpenOption;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
-/** Profile-scoped immutable converted objects with metadata-last visibility. */
+/** Exact-path converted-container storage owned by model management. */
 public final class ConvertedObjectStore {
-    private static final String LOCK_NAMESPACE = "converted-object";
+    /** Suffix of one stored converted container. */
+    static final String CONTAINER_SUFFIX = ".mxc";
 
-    private final SharedCachePaths paths;
+    /** Staging directory of the converted store. */
+    static final String TEMPORARY_DIRECTORY = ".tmp";
+
+    private final Path gameCacheRoot;
     private final AtomicSharedCache cache;
-    private final ConversionProfileId profile;
-    private final ConvertedCacheLifecycle lifecycle;
-    private final ConcurrentHashMap<Hash256, ValidationMemo> validationMemos =
-            new ConcurrentHashMap<>();
 
-    public ConvertedObjectStore(SharedCachePaths paths, AtomicSharedCache cache,
-                                ConversionProfileId profile) {
-        this(paths, cache, profile, null);
+    public ConvertedObjectStore(Path gameCacheRoot) {
+        this(gameCacheRoot, new AtomicSharedCache(gameCacheRoot));
     }
 
-    public ConvertedObjectStore(SharedCachePaths paths, AtomicSharedCache cache,
-                                ConversionProfileId profile,
-                                ConvertedCacheLifecycle lifecycle) {
-        this.paths = Objects.requireNonNull(paths, "paths");
+    ConvertedObjectStore(Path gameCacheRoot, AtomicSharedCache cache) {
+        this.gameCacheRoot = Objects.requireNonNull(gameCacheRoot, "gameCacheRoot");
         this.cache = Objects.requireNonNull(cache, "cache");
-        this.profile = Objects.requireNonNull(profile, "profile");
-        this.lifecycle = lifecycle;
-    }
-
-    public ConversionProfileId profile() {
-        return profile;
     }
 
     public Path temporaryRoot() {
-        return paths.convertedTemporary();
+        return convertedRoot().resolve(TEMPORARY_DIRECTORY);
     }
 
-    public Optional<VerifiedConvertedObject> openVerified(Hash256 modelHash,
-                                                          CatalogModelLocation location)
+    private Path convertedRoot() {
+        return AssetPaths.convertedRoot(gameCacheRoot);
+    }
+
+    /** Converted objects of one model, partitioned by model id. */
+    private Path modelRoot(Hash256 modelId) {
+        return convertedRoot().resolve(modelId.toString());
+    }
+
+    private Path containerPath(Hash256 modelId, Hash256 containerId) {
+        return modelRoot(modelId).resolve(containerId + CONTAINER_SUFFIX);
+    }
+
+    public Optional<ModelFileIdentity> findIdentity(ConvertedSourceIndex entry)
             throws IOException {
-        requireShared();
-        return Optional.ofNullable(openIfValid(new ConvertedObjectKey(profile, modelHash), location));
-    }
-
-    public boolean isStructurallyVisible(Hash256 modelHash) throws IOException {
-        requireShared();
-        var key = new ConvertedObjectKey(profile, modelHash);
-        var object = cache.checkedTarget(objectPath(key));
-        var metadataFile = cache.checkedTarget(metadataPath(key));
-        if (!Files.isRegularFile(object) || !Files.isRegularFile(metadataFile)) {
-            return false;
+        Objects.requireNonNull(entry, "entry");
+        var expectedModelId = entry.modelId();
+        var expectedContainerId = entry.containerId();
+        var file = containerPath(expectedModelId, expectedContainerId);
+        if (!RegularFileProbe.exists(file)) {
+            return Optional.empty();
         }
         try {
-            var metadata = ConvertedObjectMetadata.read(metadataFile);
-            return metadata.key().equals(key) && metadata.containerSize() == Files.size(object);
-        } catch (IOException | RuntimeException invalid) {
-            return false;
-        }
-    }
-
-    public VerifiedConvertedObject commit(RawCompileResult compiled,
-                                           CatalogModelLocation location) throws IOException {
-        requireShared();
-        var key = new ConvertedObjectKey(profile, compiled.modelHash());
-        return cache.withKeyLock(LOCK_NAMESPACE, key.toString(),
-                () -> commitLocked(key, compiled, location));
-    }
-
-    public VerifiedConvertedObject resolveKnownHash(Path source, CatalogModelLocation location,
-                                                    Hash256 expectedHash, RawCompiler compiler)
-            throws IOException {
-        requireShared();
-        var key = new ConvertedObjectKey(profile, expectedHash);
-        var existing = openIfValid(key, location);
-        if (existing != null) {
-            return existing;
-        }
-        return cache.withKeyLock(LOCK_NAMESPACE, key.toString(), () -> {
-            var afterLock = openIfValid(key, location);
-            if (afterLock != null) {
-                return afterLock;
+            final ModelFileIdentity identity;
+            try (var channel = FileChannel.open(file, StandardOpenOption.READ)) {
+                identity = ModelFileIdentityReader.read(channel);
             }
-            Files.createDirectories(paths.convertedTemporary());
-            var temporaryDirectory = Files.createTempDirectory(
-                    paths.convertedTemporary(), "known-");
-            RawCompileResult compiled = null;
-            try {
-                compiled = compiler.compile(source, temporaryDirectory);
-                if (!compiled.modelHash().equals(expectedHash)) {
-                    throw new ModelHashMismatchException(location, expectedHash,
-                            compiled.modelHash());
+            if (!identity.modelId().equals(expectedModelId)
+                    || !identity.containerId().equals(expectedContainerId)) {
+                return Optional.empty();
+            }
+            return Optional.of(identity);
+        } catch (AssetLoadException accessOrContent) {
+            if (accessOrContent.reason() == AssetLoadException.Reason.ACCESS) {
+                throw accessOrContent;
+            }
+            return Optional.empty();
+        } catch (FileSystemException | SecurityException infrastructureFailure) {
+            throw infrastructureFailure;
+        } catch (IOException | RuntimeException invalid) {
+            return Optional.empty();
+        }
+    }
+
+    public ModelFileIdentity commit(RawCompileResult compiled,
+                                    CatalogModelLocation location) throws IOException {
+        Objects.requireNonNull(compiled, "compiled");
+        final ModelFileIdentity stagedIdentity;
+        try (var staged = ManagedContainer.verifyFile(compiled.stagedContainer())) {
+            stagedIdentity = staged.identity();
+        }
+        var actualModelId = stagedIdentity.modelId();
+        if (!compiled.modelHash().equals(actualModelId)) {
+            throw new ModelHashMismatchException(location, compiled.modelHash(), actualModelId);
+        }
+        var containerId = stagedIdentity.containerId();
+        var target = containerPath(actualModelId, containerId);
+        cache.materializeReplacing("converted-container", identityKey(stagedIdentity), target,
+                path -> fullyMatches(path, stagedIdentity), temporary -> {
+            Files.copy(compiled.stagedContainer(), temporary,
+                    StandardCopyOption.REPLACE_EXISTING);
+            try (var verified = ManagedContainer.verifyFile(temporary)) {
+                if (!verified.identity().equals(stagedIdentity)) {
+                    throw new IOException("Converted container identity changed before commit");
                 }
-                return commitLocked(key, compiled, location);
-            } finally {
-                if (compiled != null && compiled.stagedContainer().startsWith(temporaryDirectory)) {
-                    Files.deleteIfExists(compiled.stagedContainer());
-                }
-                deleteEmptyDirectory(temporaryDirectory);
             }
         });
+        return stagedIdentity;
     }
 
-    public void invalidate(Hash256 modelHash) {
-        requireShared();
-        validationMemos.remove(modelHash);
+    public Path objectPath(Hash256 modelId, Hash256 containerId) {
+        return containerPath(modelId, containerId);
     }
 
-    Path objectPath(ConvertedObjectKey key) {
-        return paths.convertedObjects(key.profile()).resolve(key.modelHash() + ".mxc");
-    }
-
-    Path metadataPath(ConvertedObjectKey key) {
-        return paths.convertedObjects(key.profile()).resolve(key.modelHash() + ".meta");
-    }
-
-    private VerifiedConvertedObject commitLocked(ConvertedObjectKey key,
-                                                  RawCompileResult compiled,
-                                                  CatalogModelLocation location) throws IOException {
-        var existing = openIfValid(key, location);
-        if (existing != null) {
-            return existing;
-        }
-        if (!key.modelHash().equals(compiled.modelHash())) {
-            throw new IOException("Compiled model hash does not match converted object key");
-        }
-
-        var object = cache.checkedTarget(objectPath(key));
-        var metadata = cache.checkedTarget(metadataPath(key));
-        validationMemos.remove(key.modelHash());
-        quarantinePair(object, metadata);
-        Files.createDirectories(object.getParent());
-
-        var suffix = ".tmp-" + ProcessHandle.current().pid() + "-" + UUID.randomUUID();
-        var objectTemporary = object.resolveSibling(object.getFileName() + suffix);
-        var metadataTemporary = metadata.resolveSibling(metadata.getFileName() + suffix);
-        var startedAt = System.nanoTime();
-        try {
-            Files.copy(compiled.stagedContainer(), objectTemporary,
-                    StandardCopyOption.REPLACE_EXISTING);
-            var validated = ModelFileHandle.openDirect(objectTemporary, location);
-            if (!validated.descriptor().modelHash().equals(key.modelHash())) {
-                throw new ModelHashMismatchException(location, key.modelHash(),
-                        validated.descriptor().modelHash());
+    private static boolean fullyMatches(Path file, ModelFileIdentity expected)
+            throws IOException {
+        try (var verified = ManagedContainer.verifyFile(file)) {
+            return verified.identity().equals(expected);
+        } catch (AssetLoadException failure) {
+            if (failure.reason() == AssetLoadException.Reason.ACCESS) {
+                throw failure;
             }
-            var gate = new ConvertedObjectMetadata(key,
-                    validated.descriptor().descriptorHash(), Files.size(objectTemporary));
-            ConvertedObjectMetadata.write(metadataTemporary, gate);
-            if (!gate.equals(ConvertedObjectMetadata.read(metadataTemporary))) {
-                throw new IOException("Converted object metadata failed round-trip validation");
-            }
-
-            AtomicSharedCache.moveCommitted(objectTemporary, object);
-            AtomicSharedCache.moveCommitted(metadataTemporary, metadata);
-            var committed = requireValid(key, location);
-            YesSteveModel.LOGGER.debug(
-                    "Committed converted object key={} elapsedMs={}", key,
-                    Duration.ofNanos(System.nanoTime() - startedAt).toMillis());
-            return committed;
-        } finally {
-            Files.deleteIfExists(objectTemporary);
-            Files.deleteIfExists(metadataTemporary);
-        }
-    }
-
-    private VerifiedConvertedObject requireValid(ConvertedObjectKey key,
-                                                 CatalogModelLocation location) throws IOException {
-        var value = openIfValid(key, location);
-        if (value == null) {
-            throw new IOException("Committed converted object is not visible: " + key);
-        }
-        return value;
-    }
-
-    private VerifiedConvertedObject openIfValid(ConvertedObjectKey key,
-                                                CatalogModelLocation location) throws IOException {
-        var object = cache.checkedTarget(objectPath(key));
-        var metadataFile = cache.checkedTarget(metadataPath(key));
-        if (!Files.isRegularFile(object) || !Files.isRegularFile(metadataFile)) {
-            return null;
-        }
-        try {
-            var metadata = ConvertedObjectMetadata.read(metadataFile);
-            if (!metadata.key().equals(key) || metadata.containerSize() != Files.size(object)) {
-                validationMemos.remove(key.modelHash());
-                return null;
-            }
-            var objectStamp = FileStamp.capture(object);
-            var metadataStamp = FileStamp.capture(metadataFile);
-            var memo = validationMemos.get(key.modelHash());
-            if (memo != null && memo.key().equals(key)
-                    && memo.objectStamp().equals(objectStamp)
-                    && memo.metadataStamp().equals(metadataStamp)
-                    && memo.descriptor().descriptorHash().equals(metadata.descriptorHash())) {
-                return new VerifiedConvertedObject(key, object, memo.descriptor());
-            }
-            var validated = ModelFileHandle.openDirect(object, location);
-            if (!validated.descriptor().modelHash().equals(key.modelHash())
-                    || !validated.descriptor().descriptorHash().equals(metadata.descriptorHash())) {
-                validationMemos.remove(key.modelHash());
-                return null;
-            }
-            validationMemos.put(key.modelHash(), new ValidationMemo(key, objectStamp,
-                    metadataStamp, validated.descriptor()));
-            var handle = ModelFileHandle.openConverted(object, location);
-            return new VerifiedConvertedObject(key, object, handle.descriptor());
+            return false;
+        } catch (FileSystemException | SecurityException failure) {
+            throw failure;
         } catch (IOException | RuntimeException invalid) {
-            validationMemos.remove(key.modelHash());
-            YesSteveModel.LOGGER.debug("Converted object validation failed key={}", key, invalid);
-            return null;
+            return false;
         }
     }
 
-    private static void quarantinePair(Path object, Path metadata) throws IOException {
-        var suffix = ".corrupt-" + Instant.now().toEpochMilli();
-        quarantine(object, suffix);
-        quarantine(metadata, suffix);
+    private static String identityKey(ModelFileIdentity identity) {
+        return identity.modelId() + ":" + identity.containerId();
     }
 
-    private static void quarantine(Path file, String suffix) throws IOException {
-        if (Files.exists(file)) {
-            Files.move(file, file.resolveSibling(file.getFileName() + suffix),
-                    StandardCopyOption.REPLACE_EXISTING);
-        }
-    }
-
-    private static void deleteEmptyDirectory(Path directory) throws IOException {
-        if (Files.isDirectory(directory)) {
-            try (var entries = Files.list(directory)) {
-                if (entries.findAny().isEmpty()) {
-                    Files.deleteIfExists(directory);
-                }
-            }
-        }
-    }
-
-    private void requireShared() {
-        if (lifecycle != null) {
-            lifecycle.requireShared();
-        }
-    }
-
-    @FunctionalInterface
-    public interface RawCompiler {
-        RawCompileResult compile(Path source, Path outputDirectory) throws IOException;
-    }
-
-    private record ValidationMemo(ConvertedObjectKey key, FileStamp objectStamp,
-                                  FileStamp metadataStamp,
-                                  com.elfmcys.ysm.model.domain.ModelDescriptor descriptor) {
-    }
-
-    private record FileStamp(long size, long modifiedMillis, String fileKey) {
-        private static FileStamp capture(Path path) throws IOException {
-            var attributes = Files.readAttributes(path, BasicFileAttributes.class);
-            return new FileStamp(attributes.size(), attributes.lastModifiedTime().toMillis(),
-                    Objects.toString(attributes.fileKey(), ""));
-        }
-    }
 }

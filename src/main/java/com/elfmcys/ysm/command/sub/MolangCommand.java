@@ -1,8 +1,8 @@
 package com.elfmcys.ysm.command.sub;
 
 import com.elfmcys.ysm.network.NetworkHandler;
-import com.elfmcys.ysm.proto.network.protocol.v0.CommonV0;
-import com.elfmcys.ysm.proto.network.protocol.v0.ControlV0;
+import com.elfmcys.ysm.proto.network.EntityRef;
+import com.elfmcys.ysm.proto.network.ExecuteMolangEvent;
 import com.elfmcys.ysm.util.CommandUtil;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -10,13 +10,12 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import java.util.Collection;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.commands.arguments.selector.EntitySelector;
 import net.minecraft.server.level.ServerPlayer;
-
-import java.util.Collection;
 
 public class MolangCommand {
     private static final String MOLANG_NAME = "molang";
@@ -43,9 +42,10 @@ public class MolangCommand {
     }
 
     private static int executeMolangOnPlayer(String molangExp, Collection<ServerPlayer> players) {
-        var packet = ControlV0.ExecuteMolangEvent.newInstance().setExpression(molangExp);
-        players.forEach(player -> packet.addTargets(CommonV0.EntityRef.newInstance().setEntityId(player.getId())));
-        NetworkHandler.broadcastToAllPlayers(packet);
+        var packet = ExecuteMolangEvent.newBuilder().setExpression(molangExp);
+        players.forEach(player -> packet.addTargets(EntityRef.newBuilder()
+                .setEntityId(player.getId()).build()));
+        NetworkHandler.broadcastToAllPlayers(packet.build());
         return Command.SINGLE_SUCCESS;
     }
 }

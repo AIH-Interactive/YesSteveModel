@@ -1,23 +1,25 @@
 package com.elfmcys.ysm.format.container;
 
 import com.elfmcys.ysm.buffer.NativeBuffer;
+import com.elfmcys.ysm.model.domain.Hash256;
 import com.elfmcys.ysm.natives.Blake3;
+import com.elfmcys.ysm.version.VersionCompatibility;
 import com.google.common.io.LittleEndianDataInputStream;
 import it.unimi.dsi.fastutil.objects.Object2ReferenceMaps;
 import it.unimi.dsi.fastutil.objects.Object2ReferenceOpenHashMap;
 import it.unimi.dsi.fastutil.shorts.Short2ReferenceMaps;
 import it.unimi.dsi.fastutil.shorts.Short2ReferenceOpenHashMap;
-import org.apache.commons.io.input.BoundedInputStream;
-import org.apache.commons.lang3.NotImplementedException;
-import org.apache.commons.lang3.SerializationException;
-
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.channels.Channels;
 import java.nio.channels.SeekableByteChannel;
 import java.util.Arrays;
+import org.apache.commons.io.input.BoundedInputStream;
+import org.apache.commons.lang3.NotImplementedException;
+import org.apache.commons.lang3.SerializationException;
 
 /** Parses and validates container metadata. Chunk payload I/O belongs to ChunkDataSource implementations. */
 public final class AssetContainerReader {
@@ -57,20 +59,16 @@ public final class AssetContainerReader {
 
         reader = beginRead(file, headerOffset + 2, headerSize - 2, headerSize - 2);
         var majorVer = reader.readUnsignedByte();
-        if (majorVer != AssetContainerConstant.CURRENT_MAJOR_VER) {
-            throw new UnsupportedEncodingException("Container version of " + majorVer + " is not supported");
-        }
-
         var minorVer = reader.readUnsignedShort();
         var patchVer = reader.readUnsignedShort();
         var qualifierVer = BinaryUtil.readFixedString(reader,
                 AssetContainerConstant.HEADER_QUALIFIER_VERSION_SIZE);
-        if (minorVer != AssetContainerConstant.CURRENT_MINOR_VER
-                || patchVer != AssetContainerConstant.CURRENT_PATCH_VER
-                || !qualifierVer.equals(AssetContainerConstant.CURRENT_QUALIFIER_VER)) {
-            throw new UnsupportedEncodingException("Container version is not supported: "
-                    + majorVer + "." + minorVer + "." + patchVer
-                    + (qualifierVer.isEmpty() ? "" : "-" + qualifierVer));
+        var version = majorVer + "." + minorVer + "." + patchVer
+                + (qualifierVer.isEmpty() ? "" : "-" + qualifierVer);
+        if (!VersionCompatibility.isCompatible(AssetContainerConstant.CURRENT_VERSION,
+                version, String::equals)) {
+            throw new UnsupportedEncodingException(
+                    "Container version is not supported: " + version);
         }
         var schema = BinaryUtil.readFixedString(reader, AssetContainerConstant.HEADER_SCHEMA_SIZE);
 
@@ -164,12 +162,24 @@ public final class AssetContainerReader {
         if (verification.alignmentShift() != 0) {
             throw new SerializationException("Illegal verification chunk alignment");
         }
+        if (verification.size() < AssetContainerConstant.VERIFICATION_PAYLOAD_HEADER_SIZE) {
+            throw new SerializationException("Verification payload is too small");
+        }
+        final Hash256 containerId;
         try (var verificationInput = NativeBuffer.allocate((int) chunkDataOffset)) {
             readFully(file, 0, verificationInput.nio());
             var verificationPayload = new byte[verification.size()];
             readFully(file, verification.offset(), ByteBuffer.wrap(verificationPayload));
+            var signatureLength = Short.toUnsignedInt(ByteBuffer.wrap(verificationPayload,
+                    AssetContainerConstant.HASH_SIZE, Short.BYTES)
+                    .order(ByteOrder.LITTLE_ENDIAN).getShort());
+            if (verificationPayload.length
+                    != AssetContainerConstant.VERIFICATION_PAYLOAD_HEADER_SIZE + signatureLength) {
+                throw new SerializationException("Malformed verification signature length");
+            }
+            var hash = Arrays.copyOf(verificationPayload, AssetContainerConstant.HASH_SIZE);
             if (verification.encoding().equals(AssetContainerConstant.HASH_NAME)) {
-                if (!Blake3.validateHash(verificationInput, verificationPayload)) {
+                if (!Blake3.validateHash(verificationInput, hash)) {
                     throw new SerializationException("Container verification failed");
                 }
             } else if (verification.encoding().equals(AssetContainerConstant.ED25519_NAME)) {
@@ -177,17 +187,23 @@ public final class AssetContainerReader {
             } else {
                 throw new SerializationException("Unknown verification method");
             }
+            containerId = new Hash256(hash);
         }
 
         var preambleSize = Math.addExact(verification.offset(), verification.size());
-        return new AssetContainerView(minorVer, patchVer, qualifierVer, schema,
+        return new AssetContainerView(minorVer, patchVer, qualifierVer, schema, containerId,
                 globalAlignmentShift, preambleSize,
                 Short2ReferenceMaps.unmodifiable(schemaProperties),
                 Object2ReferenceMaps.unmodifiable(chunkTable));
     }
 
     public static AssetContainerView readPreamble(byte[] containerPreamble) throws IOException {
-        try (var channel = new ByteArraySeekableChannel(containerPreamble)) {
+        return readPreamble(containerPreamble, 0, containerPreamble.length);
+    }
+
+    public static AssetContainerView readPreamble(byte[] containerPreamble,
+                                                  int offset, int size) throws IOException {
+        try (var channel = new ByteArraySeekableChannel(containerPreamble, offset, size)) {
             return read(channel);
         }
     }

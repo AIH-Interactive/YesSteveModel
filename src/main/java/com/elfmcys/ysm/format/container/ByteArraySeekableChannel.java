@@ -5,23 +5,37 @@ import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.SeekableByteChannel;
 
-final class ByteArraySeekableChannel implements SeekableByteChannel {
+public final class ByteArraySeekableChannel implements SeekableByteChannel {
     private final byte[] data;
+    private final int offset;
+    private final int size;
     private int position;
     private boolean open = true;
 
-    ByteArraySeekableChannel(byte[] data) {
+    public ByteArraySeekableChannel(byte[] data) {
+        this(data, 0, data.length);
+    }
+
+    public ByteArraySeekableChannel(byte[] data, int offset, int size) {
+        if (data == null) {
+            throw new NullPointerException("data");
+        }
+        if (offset < 0 || size < 0 || size > data.length - offset) {
+            throw new IndexOutOfBoundsException();
+        }
         this.data = data;
+        this.offset = offset;
+        this.size = size;
     }
 
     @Override
     public int read(ByteBuffer dst) throws IOException {
         checkOpen();
-        if (position == data.length) {
+        if (position == size) {
             return -1;
         }
-        var length = Math.min(dst.remaining(), data.length - position);
-        dst.put(data, position, length);
+        var length = Math.min(dst.remaining(), size - position);
+        dst.put(data, offset + position, length);
         position += length;
         return length;
     }
@@ -40,7 +54,7 @@ final class ByteArraySeekableChannel implements SeekableByteChannel {
     @Override
     public SeekableByteChannel position(long newPosition) throws IOException {
         checkOpen();
-        if (newPosition < 0 || newPosition > data.length) {
+        if (newPosition < 0 || newPosition > size) {
             throw new IllegalArgumentException("Invalid position: " + newPosition);
         }
         position = Math.toIntExact(newPosition);
@@ -50,7 +64,7 @@ final class ByteArraySeekableChannel implements SeekableByteChannel {
     @Override
     public long size() throws IOException {
         checkOpen();
-        return data.length;
+        return size;
     }
 
     @Override

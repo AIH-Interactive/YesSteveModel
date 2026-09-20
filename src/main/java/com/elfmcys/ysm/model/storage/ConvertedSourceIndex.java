@@ -1,19 +1,41 @@
 package com.elfmcys.ysm.model.storage;
 
-import com.elfmcys.ysm.model.catalog.ModelSourceKey;
-import com.elfmcys.ysm.model.catalog.SourceStamp;
 import com.elfmcys.ysm.model.domain.Hash256;
+import com.elfmcys.ysm.model.domain.ModelFileIdentity;
 
 import java.util.Objects;
 
-public record ConvertedSourceIndex(ModelSourceKey sourceKey, SourceStamp lastObservedStamp,
-                                   ConversionProfileId profile, Hash256 modelHash,
-                                   Hash256 descriptorHash) {
+/** The only persisted converted-source mapping. */
+public record ConvertedSourceIndex(ModelFileIdentity identity,
+                                   String rawRelativePath, String fullModVersion) {
     public ConvertedSourceIndex {
-        Objects.requireNonNull(sourceKey, "sourceKey");
-        Objects.requireNonNull(lastObservedStamp, "lastObservedStamp");
-        Objects.requireNonNull(profile, "profile");
-        Objects.requireNonNull(modelHash, "modelHash");
-        Objects.requireNonNull(descriptorHash, "descriptorHash");
+        Objects.requireNonNull(identity, "identity");
+        rawRelativePath = normalizeRawRelativePath(rawRelativePath);
+        fullModVersion = Objects.requireNonNull(fullModVersion, "fullModVersion");
+        if (fullModVersion.isBlank()) {
+            throw new IllegalArgumentException("Full mod version must not be blank");
+        }
+    }
+
+    public Hash256 modelId() {
+        return identity.modelId();
+    }
+
+    public Hash256 containerId() {
+        return identity.containerId();
+    }
+
+    static String normalizeRawRelativePath(String value) {
+        Objects.requireNonNull(value, "rawRelativePath");
+        if (value.isEmpty() || value.startsWith("/") || value.endsWith("/")
+                || value.indexOf('\\') >= 0 || value.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException("Invalid raw relative path: " + value);
+        }
+        for (var segment : value.split("/", -1)) {
+            if (segment.isEmpty() || segment.equals(".") || segment.equals("..")) {
+                throw new IllegalArgumentException("Invalid raw relative path: " + value);
+            }
+        }
+        return value;
     }
 }

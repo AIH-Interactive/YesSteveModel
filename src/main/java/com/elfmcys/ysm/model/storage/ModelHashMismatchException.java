@@ -1,6 +1,6 @@
 package com.elfmcys.ysm.model.storage;
 
-import com.elfmcys.ysm.model.catalog.CatalogModelLocation;
+import com.elfmcys.ysm.model.catalog.source.CatalogModelLocation;
 import com.elfmcys.ysm.model.domain.Hash256;
 
 import java.io.IOException;

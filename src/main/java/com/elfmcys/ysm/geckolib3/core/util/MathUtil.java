@@ -1,6 +1,7 @@
 package com.elfmcys.ysm.geckolib3.core.util;
 
 import net.minecraft.util.Mth;
+import org.joml.Math;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
@@ -39,9 +40,9 @@ public class MathUtil {
      * 当前版本 joml 的这个方法有 bug，此为修复后的版本
      */
     public static Vector3f getEulerAnglesZYX(Quaternionf q, Vector3f eulerAngles) {
-        eulerAngles.x = org.joml.Math.atan2(q.y * q.z + q.w * q.x, 0.5f - q.x * q.x - q.y * q.y);
-        eulerAngles.y = org.joml.Math.safeAsin(-2.0f * (q.x * q.z - q.w * q.y));
-        eulerAngles.z = org.joml.Math.atan2(q.x * q.y + q.w * q.z, 0.5f - q.y * q.y - q.z * q.z);
+        eulerAngles.x = Math.atan2(q.y * q.z + q.w * q.x, 0.5f - q.x * q.x - q.y * q.y);
+        eulerAngles.y = Math.safeAsin(-2.0f * (q.x * q.z - q.w * q.y));
+        eulerAngles.z = Math.atan2(q.x * q.y + q.w * q.z, 0.5f - q.y * q.y - q.z * q.z);
         return eulerAngles;
     }
 

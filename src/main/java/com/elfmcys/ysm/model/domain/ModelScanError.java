@@ -1,6 +1,6 @@
 package com.elfmcys.ysm.model.domain;
 
-import com.elfmcys.ysm.model.catalog.CatalogRootKind;
+import com.elfmcys.ysm.model.catalog.source.CatalogRootKind;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.time.Instant;

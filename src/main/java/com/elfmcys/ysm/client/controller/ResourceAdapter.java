@@ -1,7 +1,7 @@
 package com.elfmcys.ysm.client.controller;
 
 import com.elfmcys.ysm.client.animation.condition.ConditionArmor;
-import com.elfmcys.ysm.client.model.CommonAsset;
+import com.elfmcys.ysm.model.resource.client.CommonAsset;
 import com.elfmcys.ysm.geckolib3.core.builder.Animation;
 import com.elfmcys.ysm.geckolib3.core.builder.controller.AnimationControllerData;
 import it.unimi.dsi.fastutil.objects.Object2ReferenceMap;

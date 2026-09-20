@@ -4,9 +4,9 @@ GPU Compute Renderer 尚未实现；当前 CPU 数据布局、cache 与调度契
 
 ## 目标
 
-- 保持姿态、face / UV、剔除、normal / tangent 和透明层次语义，以 Blockbench 为 authoring 基准；
+- 在 Minecraft 与 shader pack 约束内保持姿态、face / UV、剔除、normal / tangent 和透明层次语义，以 Blockbench 为 authoring 基准；
 - 将静态几何、逐帧骨骼变换、面剔除和顶点生成迁到 GPU，降低 CPU 带宽与调度尾延迟；
-- Java 继续拥有模型输入、纹理、`RenderType`、CPU fallback 和资源生命周期；
+- Java 继续拥有模型选择、纹理、lease、`RenderType`、CPU fallback 和资源生命周期；
 - GPU 格式、dispatch 与排序独立版本化，不冻结 CPU cache 或 AoSoA。
 
 ## 可继承的语义
@@ -22,9 +22,9 @@ CPU 与 GPU 可以使用不同布局和浮点中间值，但可见面、UV、双
 ## GPU 专属契约
 
 - 上传格式、dispatch 参数和资源身份必须独立版本化，并覆盖设备、shader variant 与 pass capability；不得继承 `CubeGroup`、`RenderSchedule`、`VertexKind` 或 native 借用布局。
-- Java render target owner 保活 GPU geometry、pipeline 与 texture binding。资源替换、shader reload 或设备丢失时，先停止新提交，再等待 GPU 完成后回收旧资源。
+- Java render target 拥有 GPU geometry、pipeline 与 texture binding，并由 `ResourceLease` 保活。Reload、shader reload 或设备丢失先撤销 publication，再等待 GPU 完成后回收旧资源。
 - 逐帧上传与输出必须有界；compute 与 draw 之间使用 barrier，跨帧复用使用 fence。透明排序留在 GPU 或明确回退，不能逐帧全量读回 CPU。
-- 不支持的 pass 或失败路径必须原子选择当前 CPU renderer，不能混合两条管线的中间状态。
+- 不支持的 pass 或失败路径必须原子选择当前 CPU renderer，不能混合两条管线的半成品。
 
 ## 进入 current 的条件
 

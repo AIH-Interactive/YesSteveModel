@@ -5,6 +5,7 @@ import com.elfmcys.ysm.buffer.UniBuffer;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -81,6 +82,41 @@ class ZstdTest {
             assertEquals("Native zstd decompression returned no result",
                     error.getMessage());
         }
+    }
+
+    @Test
+    void temporaryNativeOwnerSurvivesConcurrentGcDuringJniCall() throws Exception {
+        var payload = new byte[4 * 1024 * 1024];
+        for (var index = 0; index < payload.length; index++) {
+            payload[index] = (byte) (index * 31);
+        }
+        var running = new AtomicBoolean(true);
+        var gc = new Thread(() -> {
+            while (running.get()) {
+                System.gc();
+                Thread.onSpinWait();
+            }
+        }, "zstd-owner-gc-pressure");
+        gc.setDaemon(true);
+        gc.start();
+        try {
+            for (var iteration = 0; iteration < 4; iteration++) {
+                var hash = new byte[Blake3.HASH_SIZE];
+                try (var compressed = compressTemporaryNative(payload, hash);
+                     var decoded = Zstd.decompressAndValidate(
+                             compressed, payload.length, hash, BufferType.ARRAY)) {
+                    assertArrayEquals(payload, bytes(decoded));
+                }
+            }
+        } finally {
+            running.set(false);
+            gc.join();
+        }
+    }
+
+    private static UniBuffer compressTemporaryNative(byte[] payload, byte[] hash) {
+        return Zstd.compressAndHash(buffer(payload, BufferType.NATIVE), hash,
+                BufferType.NATIVE, 16);
     }
 
     private static void assertRoundTrip(byte[] payload, BufferType inputType,

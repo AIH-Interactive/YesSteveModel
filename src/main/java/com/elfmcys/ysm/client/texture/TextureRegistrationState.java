@@ -7,7 +7,6 @@ final class TextureRegistrationState<I> {
     private Token current;
     private boolean active;
     private boolean registered;
-    private boolean registrationPending;
     private boolean releasePending;
     private int delayTicks;
     private int remainingRemovalTicks;
@@ -23,7 +22,6 @@ final class TextureRegistrationState<I> {
     Activation activate(int delayTicks) {
         current = new Token();
         active = true;
-        registrationPending = !registered;
         releasePending = false;
         this.delayTicks = delayTicks;
         remainingRemovalTicks = 0;
@@ -34,20 +32,11 @@ final class TextureRegistrationState<I> {
         return active && current == token;
     }
 
-    boolean isReady(Token token) {
-        return isActive(token) && registered;
-    }
-
-    boolean needsRegistration(Token token) {
-        return isActive(token) && registrationPending && !registered;
-    }
-
     boolean markRegistered(Token token) {
-        if (!needsRegistration(token)) {
+        if (!isActive(token) || registered) {
             return false;
         }
         registered = true;
-        registrationPending = false;
         return true;
     }
 
@@ -60,7 +49,6 @@ final class TextureRegistrationState<I> {
             return ReleaseResult.IGNORED;
         }
         active = false;
-        registrationPending = false;
         if (!registered) {
             return ReleaseResult.DISCARD;
         }
@@ -100,7 +88,7 @@ final class TextureRegistrationState<I> {
         DELAYED
     }
 
-    record Activation(Token token, boolean ready) {
+    record Activation(Token token, boolean registered) {
     }
 
     static final class Token {

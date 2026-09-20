@@ -3,18 +3,25 @@ package com.elfmcys.ysm.natives;
 import java.io.Closeable;
 
 public final class NativeProfiler {
-    private static final int ZONE_ANIMATABLE_ENTITY_UPDATE = 0;
-    private static final int ZONE_FALLBACK_VERTEX_WRITER_WRITE = 1;
-
     private NativeProfiler() {
     }
 
     public static Scope beginAnimatableUpdate() {
-        return beginZone(ZONE_ANIMATABLE_ENTITY_UPDATE);
+        return NativeRuntime.isTracyEnabled()
+                ? beginZone(JavaZone.ANIMATABLE_UPDATE)
+                : Scope.NOOP;
+    }
+
+    public static Scope beginRenderer() {
+        return NativeRuntime.isTracyEnabled()
+                ? beginZone(JavaZone.RENDERER)
+                : Scope.NOOP;
     }
 
     public static Scope beginFallbackVertexWrite() {
-        return beginZone(ZONE_FALLBACK_VERTEX_WRITER_WRITE);
+        return NativeRuntime.isTracyEnabled()
+                ? beginZone(JavaZone.FALLBACK_VERTEX_WRITER)
+                : Scope.NOOP;
     }
 
     public static boolean beginFrame() {
@@ -27,12 +34,34 @@ public final class NativeProfiler {
         }
     }
 
-    private static Scope beginZone(int zoneId) {
-        if (!NativeRuntime.isTracyEnabled()) {
-            return Scope.NOOP;
-        }
-        var token = nBeginZone(zoneId);
+    private static Scope beginZone(JavaZone zone) {
+        var token = nBeginZone(zone.sourceLocation);
         return token == 0 ? Scope.NOOP : new Scope(token);
+    }
+
+    private enum JavaZone {
+        ANIMATABLE_UPDATE(
+                "YSM/Java/AnimatableEntity.update",
+                "AnimatableEntity.update",
+                "AnimatableEntity.java"),
+        RENDERER(
+                "YSM/Java/NativeRenderer.render",
+                "NativeRenderer.render",
+                "NativeRenderer.java"),
+        FALLBACK_VERTEX_WRITER(
+                "YSM/Java/FallbackVertexWriter.write",
+                "FallbackVertexWriter.write",
+                "FallbackVertexWriter.java");
+
+        private final long sourceLocation;
+
+        JavaZone(String name, String function, String file) {
+            sourceLocation = nCreateSourceLocation(name, function, file, 0);
+            if (sourceLocation == 0) {
+                throw new IllegalStateException(
+                        "Failed to create native profile source location: " + name);
+            }
+        }
     }
 
     public static final class Scope implements Closeable {
@@ -52,7 +81,9 @@ public final class NativeProfiler {
         }
     }
 
-    private static native long nBeginZone(int zoneId);
+    private static native long nCreateSourceLocation(String name, String function, String file, int line);
+
+    private static native long nBeginZone(long sourceLocation);
 
     private static native void nEndZone(long token);
 

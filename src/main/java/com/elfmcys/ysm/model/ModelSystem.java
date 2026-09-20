@@ -1,33 +1,36 @@
 package com.elfmcys.ysm.model;
 
-import com.elfmcys.ysm.model.catalog.BuiltinModelCatalog;
-import com.elfmcys.ysm.model.catalog.BuiltinModelIndex;
-import com.elfmcys.ysm.model.catalog.ModelCatalogSources;
-import com.elfmcys.ysm.model.catalog.ModelSourceDiscovery;
+import com.elfmcys.ysm.YesSteveModel;
+import com.elfmcys.ysm.model.catalog.ReloadResult;
+import com.elfmcys.ysm.model.catalog.ReloadStatus;
 import com.elfmcys.ysm.model.catalog.ReloadableModelCatalog;
-import com.elfmcys.ysm.model.catalog.StartupSourceInventory;
-import com.elfmcys.ysm.model.storage.ConversionProfileId;
-import com.elfmcys.ysm.model.storage.ConversionProfileInputs;
-import com.elfmcys.ysm.model.storage.ModelStorageInfrastructure;
-
+import com.elfmcys.ysm.model.catalog.builtin.BuiltinModelCatalog;
+import com.elfmcys.ysm.model.catalog.builtin.BuiltinModelIndex;
+import com.elfmcys.ysm.model.catalog.source.ModelCatalogSources;
+import com.elfmcys.ysm.model.resource.server.ServerChunkRuntime;
+import com.elfmcys.ysm.model.storage.ModelStorageInfra;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Objects;
-import java.util.stream.Collectors;
+import java.util.concurrent.CompletableFuture;
 
 /** Process composition root for immutable contracts, storage, and shared catalogs. */
 public final class ModelSystem implements AutoCloseable {
-    private final ModelStorageInfrastructure storage;
+    private final ModelStorageInfra storage;
     private final BuiltinModelCatalog builtins;
-    private final ReloadableModelCatalog reloadableCatalog;
+    private final ReloadableModelCatalog catalog;
+    private final ServerChunkRuntime serverChunks;
+    private CompletableFuture<ReloadResult> firstScan;
     private boolean closed;
 
-    private ModelSystem(ModelStorageInfrastructure storage,
+    private ModelSystem(ModelStorageInfra storage,
                         BuiltinModelCatalog builtins,
-                        ReloadableModelCatalog reloadableCatalog) {
+                        ReloadableModelCatalog catalog,
+                        ServerChunkRuntime serverChunks) {
         this.storage = Objects.requireNonNull(storage, "storage");
         this.builtins = Objects.requireNonNull(builtins, "builtins");
-        this.reloadableCatalog = Objects.requireNonNull(reloadableCatalog, "reloadableCatalog");
+        this.catalog = Objects.requireNonNull(catalog, "catalog");
+        this.serverChunks = Objects.requireNonNull(serverChunks, "serverChunks");
     }
 
     public static ModelSystem openDefault() {
@@ -37,34 +40,40 @@ public final class ModelSystem implements AutoCloseable {
         } catch (IOException error) {
             throw new UncheckedIOException("Failed to load the builtin model contract", error);
         }
-        var profile = ConversionProfileId.from(
-                ConversionProfileInputs.production(contract.dedupProfileHash()));
-        var inventoryStates = ModelCatalogSources.reloadableSources().stream()
-                .map(ModelSourceDiscovery::inventory).toList();
-        var inventory = new StartupSourceInventory(inventoryStates.stream().collect(
-                Collectors.toMap(state -> state.root(), state -> state)));
-        var storage = ModelStorageInfrastructure.openDefault(profile, inventory);
+        var fullModVersion = Objects.requireNonNull(YesSteveModel.MOD,
+                "Active mod container is unavailable").getModInfo().getVersion().toString();
+        var storage = ModelStorageInfra.openDefault(fullModVersion);
         BuiltinModelCatalog builtins = null;
+        ReloadableModelCatalog catalog = null;
+        ServerChunkRuntime serverChunks = null;
         try {
-            builtins = BuiltinModelCatalog.open(storage, contract);
-            var reserved = builtins.snapshot().models().stream()
-                    .map(handle -> handle.descriptor().modelHash())
-                    .collect(Collectors.toUnmodifiableSet());
-            var reloadable = new ReloadableModelCatalog(
-                    storage, ModelCatalogSources.reloadableSources(), reserved, contract);
-            return new ModelSystem(storage, builtins, reloadable);
+            builtins = BuiltinModelCatalog.open(contract);
+            catalog = new ReloadableModelCatalog(
+                    storage, ModelCatalogSources.sources(), builtins);
+            serverChunks = new ServerChunkRuntime(error -> YesSteveModel.LOGGER.warn(
+                    "Server model source instance became corrupted", error));
+            return new ModelSystem(storage, builtins, catalog, serverChunks);
         } catch (RuntimeException | Error error) {
+            if (serverChunks != null) {
+                try {
+                    serverChunks.close();
+                } catch (RuntimeException closeError) {
+                    error.addSuppressed(closeError);
+                }
+            }
+            if (catalog != null) {
+                try {
+                    catalog.close();
+                } catch (RuntimeException closeError) {
+                    error.addSuppressed(closeError);
+                }
+            }
             if (builtins != null) {
                 try {
                     builtins.close();
                 } catch (RuntimeException closeError) {
                     error.addSuppressed(closeError);
                 }
-            }
-            try {
-                storage.close();
-            } catch (RuntimeException closeError) {
-                error.addSuppressed(closeError);
             }
             throw error;
         }
@@ -75,7 +84,7 @@ public final class ModelSystem implements AutoCloseable {
         return builtins.contract();
     }
 
-    public ModelStorageInfrastructure storage() {
+    public ModelStorageInfra storage() {
         requireOpen();
         return storage;
     }
@@ -85,9 +94,44 @@ public final class ModelSystem implements AutoCloseable {
         return builtins;
     }
 
-    public ReloadableModelCatalog reloadableCatalog() {
+    public ReloadableModelCatalog catalog() {
         requireOpen();
-        return reloadableCatalog;
+        return catalog;
+    }
+
+    public ServerChunkRuntime serverChunks() {
+        requireOpen();
+        return serverChunks;
+    }
+
+    /** Registers this process before the one startup-delayed catalog scan. */
+    public synchronized CompletableFuture<ReloadResult> activateCatalog() {
+        requireOpen();
+        if (firstScan != null) {
+            return firstScan;
+        }
+        try {
+            storage.convertedConsumers().register();
+            firstScan = catalog.startScanning();
+            return firstScan;
+        } catch (IOException failure) {
+            firstScan = CompletableFuture.completedFuture(new ReloadResult(
+                    ReloadStatus.FAILED,
+                    catalog.current().byModelId().size(),
+                    catalog.current().report().errorCount(),
+                    "Failed to register converted consumer: " + failure.getMessage()));
+            return firstScan;
+        }
+    }
+
+    public void tickCatalog() {
+        requireOpen();
+        catalog.tick();
+    }
+
+    public void tickServerRuntime() {
+        requireOpen();
+        serverChunks.tick();
     }
 
     @Override
@@ -96,15 +140,24 @@ public final class ModelSystem implements AutoCloseable {
             return;
         }
         closed = true;
-        reloadableCatalog.close();
         RuntimeException failure = null;
         try {
-            builtins.close();
+            serverChunks.close();
         } catch (RuntimeException error) {
             failure = suppress(failure, error);
         }
         try {
-            storage.close();
+            catalog.close();
+        } catch (RuntimeException error) {
+            failure = suppress(failure, error);
+        }
+        try {
+            storage.convertedConsumers().close();
+        } catch (RuntimeException error) {
+            failure = suppress(failure, error);
+        }
+        try {
+            builtins.close();
         } catch (RuntimeException error) {
             failure = suppress(failure, error);
         }

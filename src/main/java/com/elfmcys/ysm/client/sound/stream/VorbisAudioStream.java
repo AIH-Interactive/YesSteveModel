@@ -1,11 +1,11 @@
 package com.elfmcys.ysm.client.sound.stream;
 
-import com.elfmcys.ysm.client.sound.data.BuildingPcmCache;
+import com.elfmcys.ysm.format.AssetLoadException;
+import com.elfmcys.ysm.format.media.SupportedAudioProbe;
 import com.mojang.blaze3d.audio.OggAudioStream;
 import io.netty.buffer.ByteBufInputStream;
 import io.netty.buffer.Unpooled;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import org.lwjgl.BufferUtils;
 
 import javax.sound.sampled.AudioFormat;
@@ -14,24 +14,54 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
-public class VorbisAudioStream implements CustomAudioStream {
-    private final static ByteBuffer EMPTY_BUFFER = BufferUtils.createByteBuffer(0);
+public final class VorbisAudioStream implements CustomAudioStream {
+    private static final ByteBuffer EMPTY_BUFFER = BufferUtils.createByteBuffer(0);
 
-    private final OggAudioStream oggAudioStream;
+    private final OggAudioStream decoder;
     private final AudioFormat audioFormat;
-    @Nullable
-    private final BuildingPcmCache pcmCache;
+    private final int channels;
+    private final long expectedFrames;
+    private long decodedFrames;
     private volatile boolean closed;
     private boolean eof;
 
-    public VorbisAudioStream(ByteBuffer byteBuffer, @Nullable BuildingPcmCache pcmCache) throws IOException, UnsupportedAudioFileException {
-        this.oggAudioStream = new OggAudioStream(new ByteBufInputStream(Unpooled.wrappedBuffer(byteBuffer)));
-        if (oggAudioStream.getFormat().getChannels() != 1 && oggAudioStream.getFormat().getChannels() != 2) {
-            throw new UnsupportedAudioFileException();
+    public VorbisAudioStream(ByteBuffer data) throws IOException, UnsupportedAudioFileException {
+        this(data, inspect(data));
+    }
+
+    public VorbisAudioStream(ByteBuffer data, SupportedAudioProbe.MediaInfo media)
+            throws IOException, UnsupportedAudioFileException {
+        if (media.encoding() != SupportedAudioProbe.Encoding.OGG_VORBIS) {
+            throw new UnsupportedAudioFileException("media is not Ogg Vorbis");
+        }
+        float representedRate = (float) media.sampleRate();
+        if ((long) representedRate != media.sampleRate()) {
+            throw new UnsupportedAudioFileException("Vorbis sample rate is not exactly representable by the host");
         }
 
-        this.audioFormat = new AudioFormat(oggAudioStream.getFormat().getSampleRate(), 16, 1, true, false);
-        this.pcmCache = pcmCache;
+        final OggAudioStream opened;
+        try {
+            opened = new OggAudioStream(
+                    new ByteBufInputStream(Unpooled.wrappedBuffer(data.duplicate())));
+        } catch (IOException failure) {
+            throw AssetLoadException.content("Invalid Ogg Vorbis stream", failure);
+        }
+        var format = opened.getFormat();
+        if (format.getChannels() != media.channels()
+                || format.getSampleRate() != representedRate) {
+            var failure = AssetLoadException.content(
+                    "Vorbis decoder metadata disagrees with inspection");
+            try {
+                opened.close();
+            } catch (IOException closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
+            throw failure;
+        }
+        decoder = opened;
+        channels = media.channels();
+        expectedFrames = media.frames();
+        audioFormat = new AudioFormat(representedRate, 16, 1, true, false);
     }
 
     @Override
@@ -41,48 +71,90 @@ public class VorbisAudioStream implements CustomAudioStream {
 
     @Override
     public @NotNull ByteBuffer read(int size) throws IOException {
-        if (eof || closed) {
+        if (size < 0) {
+            throw new IllegalArgumentException("size must not be negative");
+        }
+        if (size == 0 || eof || closed) {
             return EMPTY_BUFFER;
         }
-        var byteBuffer = oggAudioStream.read(oggAudioStream.getFormat().getChannels() * size);
-        if (!byteBuffer.hasRemaining()) {
-            if (pcmCache != null) {
-                pcmCache.submit();
+
+        int requested = size == 1 ? 2 : size - size % 2;
+        int sourceBytes;
+        try {
+            sourceBytes = Math.multiplyExact(requested, channels);
+        } catch (ArithmeticException exception) {
+            throw new IOException("Vorbis read size is too large", exception);
+        }
+        final ByteBuffer decoded;
+        try {
+            decoded = decoder.read(sourceBytes);
+        } catch (IOException failure) {
+            throw AssetLoadException.content("Invalid Ogg Vorbis stream", failure);
+        }
+        if (!decoded.hasRemaining()) {
+            if (decodedFrames != expectedFrames) {
+                eof = true;
+                throw AssetLoadException.content(
+                        "Vorbis frame count does not match the inspected timeline");
             }
             eof = true;
-            return byteBuffer;
+            return EMPTY_BUFFER;
         }
-        if (oggAudioStream.getFormat().getChannels() == 2) {
-            var src = byteBuffer.duplicate().order(ByteOrder.nativeOrder());
-            ByteBuffer dst;
-            if (!byteBuffer.isReadOnly()) {
-                dst = byteBuffer.duplicate().order(ByteOrder.nativeOrder()).limit(src.remaining() / 2);
-            } else {
-                dst = BufferUtils.createByteBuffer(src.remaining() / 2);
-            }
-            byteBuffer = dst.slice();
-            do {
-                var l = src.getShort();
-                var r = src.getShort();
-                dst.putShort((short) Math.round(((float) l + (float) r) / 2.0f));
-            } while (src.hasRemaining());
+
+        int frameBytes = channels * Short.BYTES;
+        if (decoded.remaining() % frameBytes != 0) {
+            eof = true;
+            throw AssetLoadException.content("Vorbis decoder returned a partial frame");
         }
-        if (pcmCache != null) {
-            pcmCache.putPcm(byteBuffer.duplicate());
+        long frames = decoded.remaining() / frameBytes;
+        if (frames > expectedFrames - decodedFrames) {
+            eof = true;
+            throw AssetLoadException.content(
+                    "Vorbis decoder exceeded the inspected frame count");
         }
-        return byteBuffer;
+        decodedFrames += frames;
+        if (channels == 1) {
+            return decoded;
+        }
+
+        var source = decoded.duplicate().order(ByteOrder.nativeOrder());
+        ByteBuffer destination;
+        if (!decoded.isReadOnly()) {
+            destination = decoded.duplicate().order(ByteOrder.nativeOrder());
+            destination.limit(source.remaining() / 2);
+        } else {
+            destination = BufferUtils.createByteBuffer(source.remaining() / 2)
+                    .order(ByteOrder.nativeOrder());
+        }
+        var result = destination.slice();
+        while (source.hasRemaining()) {
+            int left = source.getShort();
+            int right = source.getShort();
+            destination.putShort((short) Math.rint((left + right) / 2.0));
+        }
+        return result;
     }
 
     @Override
     public void close() throws IOException {
         if (!closed) {
-            oggAudioStream.close();
             closed = true;
+            decoder.close();
         }
     }
 
     @Override
     public boolean isClosed() {
         return closed;
+    }
+
+    private static SupportedAudioProbe.MediaInfo inspect(ByteBuffer data)
+            throws UnsupportedAudioFileException {
+        var inspection = SupportedAudioProbe.inspect(data);
+        if (!inspection.playable()
+                || inspection.media().encoding() != SupportedAudioProbe.Encoding.OGG_VORBIS) {
+            throw new UnsupportedAudioFileException(inspection.diagnostic());
+        }
+        return inspection.media();
     }
 }

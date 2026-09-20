@@ -1,19 +1,22 @@
 package com.elfmcys.ysm.model.storage;
 
-import com.elfmcys.ysm.model.catalog.CatalogRootIdentity;
-import com.elfmcys.ysm.model.catalog.CatalogRootKind;
-import com.elfmcys.ysm.model.catalog.ModelSourceKey;
-import com.elfmcys.ysm.model.catalog.ModelSourceKind;
-import com.elfmcys.ysm.model.catalog.SourceStamp;
 import com.elfmcys.ysm.model.domain.Hash256;
-import com.elfmcys.ysm.model.domain.ModelPath;
+import com.elfmcys.ysm.model.domain.ModelFileIdentity;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ConvertedSourceIndexStoreTest {
@@ -21,22 +24,87 @@ class ConvertedSourceIndexStoreTest {
     Path temp;
 
     @Test
-    void exactGateRoundTripsAndMalformedEntryIsOnlyAMiss() throws Exception {
-        var paths = new SharedCachePaths(temp.resolve("cache"));
-        var profile = new ConversionProfileId(hash(1));
-        var store = new ConvertedSourceIndexStore(paths, new AtomicSharedCache(paths), profile);
-        var root = new CatalogRootIdentity(CatalogRootKind.CUSTOM,
-                temp.resolve("models").toAbsolutePath(), "root-key");
-        var key = new ModelSourceKey(root, new ModelPath("group/model"),
-                ModelSourceKind.CURRENT_RAW_DIRECTORY);
-        var value = new ConvertedSourceIndex(key,
-                new SourceStamp.RawDirectory(hash(2), 3, 42), profile, hash(3), hash(4));
+    void exactMappingRoundTripsAsOneAtomicIndex() throws Exception {
+        var store = store("1.2.3");
+        var custom = entry(1, 11, "custom/group/model", "1.2.3");
+        var auth = entry(2, 12, "auth/model", "1.2.3");
 
-        store.write(value);
-        assertEquals(value, store.read(key).orElseThrow());
+        store.replace(List.of(auth, custom));
 
-        Files.write(store.path(key), new byte[]{1, 2, 3});
-        assertTrue(store.read(key).isEmpty());
+        assertEquals(custom, store.find("custom/group/model").orElseThrow());
+        assertEquals(auth, store.find("auth/model").orElseThrow());
+        assertEquals(Set.of("custom/group/model", "auth/model"), store.read().keySet());
+        assertEquals(temp.resolve("cache/converted/index.bin").toAbsolutePath().normalize(),
+                store.path());
+    }
+
+    @Test
+    void unifiedIdentityKeepsTheExistingIndexBytes() throws Exception {
+        var store = store("1.2.3");
+        var entry = entry(1, 11, "custom/model", "1.2.3");
+        store.replace(List.of(entry));
+        var path = entry.rawRelativePath().getBytes(StandardCharsets.UTF_8);
+        var version = entry.fullModVersion().getBytes(StandardCharsets.UTF_8);
+        var expected = ByteBuffer.allocate(8 + Integer.BYTES + Hash256.SIZE * 2
+                        + Integer.BYTES + path.length + Integer.BYTES + version.length)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .put("YSMCIDX1".getBytes(StandardCharsets.US_ASCII))
+                .putInt(1)
+                .put(entry.modelId().bytes())
+                .put(entry.containerId().bytes())
+                .putInt(path.length).put(path)
+                .putInt(version.length).put(version)
+                .array();
+
+        assertArrayEquals(expected, Files.readAllBytes(store.path()));
+    }
+
+    @Test
+    void scopedReplacementPreservesOtherManagementNamespaces() throws Exception {
+        var store = store("1.2.3");
+        var custom = entry(1, 11, "custom/old", "1.2.3");
+        var auth = entry(2, 12, "auth/kept", "1.2.3");
+        var replacement = entry(3, 13, "custom/new", "1.2.3");
+        store.replace(List.of(custom, auth));
+
+        store.replaceScopes(Set.of("custom"), List.of(replacement));
+
+        assertTrue(store.find("custom/old").isEmpty());
+        assertEquals(replacement, store.find("custom/new").orElseThrow());
+        assertEquals(auth, store.find("auth/kept").orElseThrow());
+    }
+
+    @Test
+    void rejectsDuplicatePathsAndForeignVersions() {
+        var store = store("1.2.3");
+        assertThrows(IllegalArgumentException.class, () -> store.replace(List.of(
+                entry(1, 11, "custom/model", "1.2.3"),
+                entry(2, 12, "custom/model", "1.2.3"))));
+        assertThrows(IllegalArgumentException.class, () -> store.replace(List.of(
+                entry(1, 11, "custom/model", "other"))));
+    }
+
+    @Test
+    void malformedExactIndexIsDeletedAndOtherVersionsAreMisses() throws Exception {
+        var first = store("1.2.3");
+        first.replace(List.of(entry(1, 11, "custom/model", "1.2.3")));
+        assertTrue(store("2.0.0").read().isEmpty());
+        assertTrue(Files.exists(first.path()));
+
+        Files.write(first.path(), new byte[]{1, 2, 3});
+
+        assertTrue(first.read().isEmpty());
+        assertFalse(Files.exists(first.path()));
+    }
+
+    private ConvertedSourceIndexStore store(String version) {
+        return new ConvertedSourceIndexStore(temp.resolve("cache"), version);
+    }
+
+    private static ConvertedSourceIndex entry(
+            int modelSeed, int containerSeed, String path, String version) {
+        return new ConvertedSourceIndex(
+                new ModelFileIdentity(hash(modelSeed), hash(containerSeed)), path, version);
     }
 
     private static Hash256 hash(int seed) {

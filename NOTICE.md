@@ -26,6 +26,10 @@
 
 `licenses/` 还包含随 Java 制品分发的 native 与其他第三方组件的许可证文本。
 
+Legacy native importer 内嵌了格式兼容所需的修改版 CityHash 64-bit 实现与
+ChaCha/HChaCha 参考实现。其来源和许可分别见 `licenses/cityhash` 与
+`licenses/legacy-chacha`；这些声明必须与三个平台的主 native 库一同分发。
+
 Native 项目的第三方组件、版本和许可证清单由其自身仓库维护：[THIRD_PARTY_LICENSES.md](https://github.com/YesSteveModel/YesSteveModel-Native/blob/dev/THIRD_PARTY_LICENSES.md)。
 
 本清单是合规辅助材料，不替代各上游许可证正文。

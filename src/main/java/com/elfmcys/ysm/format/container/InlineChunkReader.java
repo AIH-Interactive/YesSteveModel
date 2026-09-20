@@ -2,7 +2,7 @@ package com.elfmcys.ysm.format.container;
 
 import com.elfmcys.ysm.buffer.BufferType;
 import com.elfmcys.ysm.buffer.UniBuffer;
-import org.apache.commons.lang3.SerializationException;
+import com.elfmcys.ysm.format.AssetLoadException;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -69,7 +69,7 @@ public final class InlineChunkReader {
     private static void validate(SeekableByteChannel channel,
                                  AssetContainerView.ChunkInfo chunk) throws IOException {
         if ((long) chunk.offset() + chunk.size() > channel.size()) {
-            throw new SerializationException("Inline chunk data overflow");
+            throw AssetLoadException.content("Inline chunk data overflow");
         }
         if (chunk.alignSize() == 0) {
             return;
@@ -84,7 +84,7 @@ public final class InlineChunkReader {
             scratch.flip();
             while (scratch.hasRemaining()) {
                 if (scratch.get() != 0) {
-                    throw new SerializationException("Illegal chunk align data");
+                    throw AssetLoadException.content("Illegal chunk align data");
                 }
             }
             position += length;
@@ -97,7 +97,7 @@ public final class InlineChunkReader {
         channel.position(offset);
         while (target.hasRemaining()) {
             if (channel.read(target) < 0) {
-                throw new IOException("Unexpected end of chunk data");
+                throw AssetLoadException.content("Unexpected end of chunk data");
             }
         }
     }

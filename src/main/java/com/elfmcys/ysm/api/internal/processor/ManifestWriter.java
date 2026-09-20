@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import javax.annotation.processing.Filer;
 import javax.tools.StandardLocation;
 
@@ -122,7 +123,7 @@ final class ManifestWriter {
                 default -> {
                     if (character < 0x20) {
                         output.write("\\u");
-                        output.write(String.format(java.util.Locale.ROOT, "%04x", (int) character));
+                        output.write(String.format(Locale.ROOT, "%04x", (int) character));
                     } else {
                         output.write(character);
                     }

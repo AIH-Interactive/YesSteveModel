@@ -3,50 +3,88 @@ package com.elfmcys.ysm.format.schema.model.views;
 import com.elfmcys.ysm.format.schema.file.AssetFileView;
 import com.elfmcys.ysm.format.schema.file.ChunkDataSource;
 import com.elfmcys.ysm.natives.image.Image;
-import mixel.manifest.info.ExportInfoOuterClass;
-import mixel.manifest.info.InfoOuterClass;
-import mixel.manifest.info.MetadataOuterClass;
-import mixel.manifest.info.PropertiesOuterClass;
-import mixel.manifest.info.SettingsOuterClass;
-import com.elfmcys.ysm.task.TaskContext;
+import com.elfmcys.ysm.proto.mixel.common.StringPair;
+import com.elfmcys.ysm.proto.mixel.manifest.asset.RenderTarget;
+import com.elfmcys.ysm.proto.mixel.manifest.info.Author;
+import com.elfmcys.ysm.proto.mixel.manifest.info.ExtraAnimationButton;
+import com.elfmcys.ysm.proto.mixel.manifest.info.ExtraAnimationClassify;
+import com.elfmcys.ysm.proto.mixel.manifest.info.Info;
+import com.elfmcys.ysm.proto.mixel.manifest.info.Metadata;
+import com.elfmcys.ysm.proto.mixel.manifest.info.ModelSettings;
+import com.elfmcys.ysm.proto.mixel.manifest.info.ModelStats;
+import com.elfmcys.ysm.proto.mixel.manifest.info.Settings;
+import it.unimi.dsi.fastutil.objects.ObjectList;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.BooleanSupplier;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.HashMap;
-import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
-
-public class ModelInfoView {
+/** Immutable manifest metadata plus rebuildable lookup indexes. */
+public final class ModelInfoView {
     private final AssetFileView view;
-    private final InfoOuterClass.Info info;
-    private final HashMap<String, HashMap<String, String>> langs;
-    private final HashMap<String, MetadataOuterClass.Author> authors;
+    private final Info info;
+    private final Settings settings;
+    private final RenderTarget player;
+    private final Map<String, Map<String, String>> langs;
+    private final HashMap<String, Author> authors;
+    private final Map<String, ExtraAnimationButton> extraAnimationButtons;
+    private final Map<String, ExtraAnimationClassify> extraAnimationClassifications;
 
-    public ModelInfoView(InfoOuterClass.Info info, AssetFileView view) {
-        this.view = view;
-        this.info = info;
+    public ModelInfoView(Info info,
+                         RenderTarget player,
+                         AssetFileView view) {
+        this.view = Objects.requireNonNull(view, "view");
+        this.info = Objects.requireNonNull(info, "info");
+        this.settings = info.settings();
+        this.player = Objects.requireNonNull(player, "player");
 
-        langs = new HashMap<>(info.hasLanguageFiles() ? info.getLanguageFiles().length() : 0);
-        if (info.hasLanguageFiles()) {
-            for (var langFile : info.getLanguageFiles()) {
+        var languages = new HashMap<String, Map<String, String>>(info.languageFiles().size());
+        if (!info.languageFiles().isEmpty()) {
+            for (var langFile : info.languageFiles()) {
                 var lang = new HashMap<String, String>(
-                        langFile.hasEntries() ? langFile.getEntries().length() : 0);
-                if (langFile.hasEntries()) {
-                    for (var item : langFile.getEntries()) {
+                        langFile.entries().size());
+                if (!langFile.entries().isEmpty()) {
+                    for (var item : langFile.entries().object2ObjectEntrySet()) {
                         lang.put(item.getKey(), item.getValue());
                     }
                 }
-                langs.put(langFile.getLocale(), lang);
+                languages.put(langFile.locale(), Map.copyOf(lang));
+            }
+        }
+        langs = Map.copyOf(languages);
+
+        var metadata = info.metadataUnsafe();
+        var hasAuthors = metadata != null && !metadata.authors().isEmpty();
+        authors = new HashMap<>(hasAuthors ? metadata.authors().size() : 0);
+        if (hasAuthors) {
+            for (var author : metadata.authors()) {
+                authors.put(author.name(), author);
             }
         }
 
-        var hasAuthors = info.hasMetadata() && info.getMetadata().hasAuthors();
-        authors = new HashMap<>(hasAuthors ? info.getMetadata().getAuthors().length() : 0);
-        if (hasAuthors) {
-            for (var author : info.getMetadata().getAuthors()) {
-                authors.put(author.getName(), author);
+        var buttons = new LinkedHashMap<String, ExtraAnimationButton>();
+        for (var button : settings.extraAnimationButtons()) {
+            for (var form : button.configForms()) {
+                if (!form.type().equals("checkbox")
+                        && !form.type().equals("radio")
+                        && !form.type().equals("range")) {
+                    throw new IllegalArgumentException(
+                            "Unknown extra-animation form type: " + form.type());
+                }
             }
+            buttons.put(button.id(), button);
         }
+        extraAnimationButtons = Map.copyOf(buttons);
+
+        var classifications = new LinkedHashMap<String, ExtraAnimationClassify>();
+        for (var classification : settings.extraAnimationClassify()) {
+            classifications.put(classification.id(), classification);
+        }
+        extraAnimationClassifications = Map.copyOf(classifications);
     }
 
     @NotNull
@@ -72,27 +110,44 @@ public class ModelInfoView {
         return null;
     }
 
-    public MetadataOuterClass.Metadata getMetadata() {
-        return info.getMetadata();
+    public @Nullable Metadata getMetadata() {
+        return info.metadataUnsafe();
     }
 
-    public ExportInfoOuterClass.ExportInfo getExportInfo() {
-        return info.getExport();
+    public boolean hasMetadata() {
+        return info.hasMetadata();
     }
 
-    public PropertiesOuterClass.Properties getProperties() {
-        return info.getProperties();
+    public Settings getSettings() {
+        return settings;
     }
 
-    public SettingsOuterClass.Settings getSettings() {
-        return info.getSettings();
+    public ModelSettings getPlayerSettings() {
+        return player.settings();
     }
 
-    public CompletableFuture<@Nullable Image> readAvatar(TaskContext ctx, ChunkDataSource source, String authorName) {
+    public ModelStats getPlayerStats() {
+        return player.stats();
+    }
+
+    public ObjectList<StringPair> getExtraAnimations() {
+        return settings.extraAnimation();
+    }
+
+    public Map<String, ExtraAnimationButton> getExtraAnimationButtons() {
+        return extraAnimationButtons;
+    }
+
+    public Map<String, ExtraAnimationClassify> getExtraAnimationClassifications() {
+        return extraAnimationClassifications;
+    }
+
+    public @Nullable Image readAvatar(BooleanSupplier cancelled, ChunkDataSource source,
+                                      String authorName) throws IOException {
         var author = authors.get(authorName);
         if (author == null || !author.hasAvatar()) {
-            return CompletableFuture.completedFuture(null);
+            return null;
         }
-        return view.readImageBlob(ctx, source, author.getAvatar());
+        return view.readImageBlob(cancelled, source, author.avatarUnsafe());
     }
 }

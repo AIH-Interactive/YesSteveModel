@@ -1,72 +1,52 @@
 package com.elfmcys.ysm.network;
 
 import com.elfmcys.ysm.YesSteveModel;
-import com.elfmcys.ysm.network.forge.AssetTransferHandler;
-import com.elfmcys.ysm.network.forge.ClientboundEnvelope;
-import com.elfmcys.ysm.network.forge.ControlHandler;
-import com.elfmcys.ysm.network.forge.ForgeEnvelope;
-import com.elfmcys.ysm.network.forge.ForgeMessageBinding;
-import com.elfmcys.ysm.network.forge.ForgeProtoCodec;
-import com.elfmcys.ysm.network.forge.ForgeProtocolRegistry;
-import com.elfmcys.ysm.network.forge.HandshakeHandler;
-import com.elfmcys.ysm.network.forge.MinecraftStateHandler;
-import com.elfmcys.ysm.network.forge.PlayerStateHandler;
-import com.elfmcys.ysm.network.forge.ServerboundEnvelope;
+import com.elfmcys.ysm.buffer.ArrayBuffer;
+import com.elfmcys.ysm.buffer.UniBuffer;
+import com.elfmcys.ysm.network.forge.ClientSessionRuntime;
+import com.elfmcys.ysm.network.forge.ForgeUniBufferIO;
+import com.elfmcys.ysm.network.frame.FrameCodec;
+import com.elfmcys.ysm.network.frame.OutboundFrame;
 import com.elfmcys.ysm.network.protocol.MessageDirection;
-import com.elfmcys.ysm.network.protocol.PeerProtocolProfile;
 import com.elfmcys.ysm.network.protocol.ProtocolMessageSpec;
-import com.elfmcys.ysm.network.protocol.ProtocolVersion;
 import com.elfmcys.ysm.network.protocol.ProtocolMessages;
-import com.elfmcys.ysm.proto.network.protocol.v0.AssetTransferV0;
-import com.elfmcys.ysm.proto.network.protocol.v0.ControlV0;
-import com.elfmcys.ysm.proto.network.protocol.v0.HandshakeV0;
-import com.elfmcys.ysm.proto.network.protocol.v0.PlayerStateV0;
-import com.elfmcys.ysm.proto.network.protocol.v0.minecraft.MinecraftStateV0;
-import io.netty.util.AttributeKey;
+import com.elfmcys.ysm.network.protocol.ProtocolVersion;
+import io.netty.buffer.Unpooled;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.network.Connection;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraftforge.network.NetworkDirection;
+import net.minecraftforge.network.NetworkEvent;
 import net.minecraftforge.network.NetworkRegistry;
 import net.minecraftforge.network.PacketDistributor;
-import net.minecraftforge.network.simple.SimpleChannel;
+import net.minecraftforge.network.event.EventNetworkChannel;
+import org.apache.commons.lang3.tuple.Pair;
 import org.jetbrains.annotations.Nullable;
 import us.hebi.quickbuf.ProtoMessage;
 
-import java.util.Optional;
-import java.util.function.BiConsumer;
-import java.util.function.Supplier;
-
-@SuppressWarnings("removal")
+/** The sole Forge adapter for the current YSM frame protocol. */
 public final class NetworkHandler {
     public static final String VERSION = ProtocolVersion.TRANSPORT_VERSION;
     public static final ResourceLocation CHANNEL_NAME =
             new ResourceLocation(YesSteveModel.MOD_ID, ProtocolVersion.CHANNEL_PATH);
-    public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(CHANNEL_NAME, () -> VERSION,
-            NetworkHandler::acceptsTransportVersion, NetworkHandler::acceptsTransportVersion);
-    private static final AttributeKey<String> ATTRIBUTE_CHANNEL_VERSION =
-            AttributeKey.valueOf(YesSteveModel.MOD_ID + "_channel_version");
-    private static final AttributeKey<PeerProtocolProfile> ATTRIBUTE_PEER_PROFILE =
-            AttributeKey.valueOf(YesSteveModel.MOD_ID + "_peer_protocol_profile");
+    public static final EventNetworkChannel CHANNEL = NetworkRegistry.newEventChannel(
+            CHANNEL_NAME, () -> VERSION,
+            ignored -> true,
+            ignored -> true);
 
     private NetworkHandler() {
     }
 
-    public static boolean setChannelVersion(Connection connection, String channelVersion) {
-        return connection.channel().attr(ATTRIBUTE_CHANNEL_VERSION).compareAndSet(null, channelVersion);
-    }
-
-    public static boolean setPeerProfile(Connection connection, PeerProtocolProfile profile) {
-        return connection.channel().attr(ATTRIBUTE_PEER_PROFILE).compareAndSet(null, profile);
-    }
-
-    public static Optional<PeerProtocolProfile> peerProfile(@Nullable Connection connection) {
-        return connection == null || connection.channel() == null
-                ? Optional.empty() : Optional.ofNullable(connection.channel().attr(ATTRIBUTE_PEER_PROFILE).get());
+    public static void init() {
+        CHANNEL.addListener((NetworkEvent.ServerCustomPayloadEvent event) ->
+                receive(event, MessageDirection.SERVER_TO_CLIENT));
+        CHANNEL.addListener((NetworkEvent.ClientCustomPayloadEvent event) ->
+                receive(event, MessageDirection.CLIENT_TO_SERVER));
     }
 
     @SuppressWarnings("ConstantValue")
@@ -75,94 +55,13 @@ public final class NetworkHandler {
     }
 
     public static boolean isRemoteChannelPresent() {
-        ClientPacketListener connection = Minecraft.getInstance().getConnection();
-        return connection != null && isChannelPresent(connection.getConnection());
+        ClientPacketListener listener = Minecraft.getInstance().getConnection();
+        return listener != null && isChannelPresent(listener.getConnection());
     }
 
-    @SuppressWarnings("ConstantValue")
     public static boolean isChannelPresent(@Nullable Connection connection) {
         return connection != null && connection.channel() != null
-                && VERSION.equals(connection.channel().attr(ATTRIBUTE_CHANNEL_VERSION).get());
-    }
-
-    public static void init() {
-        registerProto(HandshakeV0.ClientHello.class, HandshakeV0.ClientHello::parseFrom,
-                HandshakeHandler::handleClientHello);
-        registerProto(HandshakeV0.ServerHello.class, HandshakeV0.ServerHello::parseFrom,
-                HandshakeHandler::handleServerHello);
-        registerProto(PlayerStateV0.PlayerStateReport.class, PlayerStateV0.PlayerStateReport::parseFrom,
-                PlayerStateHandler::handleReport);
-        registerProto(PlayerStateV0.PlayerStateUpdate.class, PlayerStateV0.PlayerStateUpdate::parseFrom,
-                PlayerStateHandler::handleUpdate);
-        registerProto(ControlV0.SelectModelRequest.class, ControlV0.SelectModelRequest::parseFrom,
-                ControlHandler::handleSelectModel);
-        registerProto(ControlV0.AuthorizedModelsSnapshot.class, ControlV0.AuthorizedModelsSnapshot::parseFrom,
-                ControlHandler::handleAuthorizedModels);
-        registerProto(ControlV0.StarredModelsSnapshot.class, ControlV0.StarredModelsSnapshot::parseFrom,
-                ControlHandler::handleStarredModels);
-        registerProto(ControlV0.UpdateStarredModelRequest.class, ControlV0.UpdateStarredModelRequest::parseFrom,
-                ControlHandler::handleUpdateStar);
-        registerProto(ControlV0.EntityAnimationActionRequest.class, ControlV0.EntityAnimationActionRequest::parseFrom,
-                ControlHandler::handleEntityAnimation);
-        registerProto(ControlV0.ExecuteMolangEvent.class, ControlV0.ExecuteMolangEvent::parseFrom,
-                ControlHandler::handleExecuteMolang);
-        registerProto(ControlV0.SubmitRouletteExpressionRequest.class,
-                ControlV0.SubmitRouletteExpressionRequest::parseFrom, ControlHandler::handleSubmitRoulette);
-        registerProto(ControlV0.EmitMolangSync.class, ControlV0.EmitMolangSync::parseFrom,
-                ControlHandler::handleEmitMolangSync);
-        registerProto(ControlV0.MolangSyncEvent.class, ControlV0.MolangSyncEvent::parseFrom,
-                ControlHandler::handleMolangSync);
-        registerProto(ControlV0.SwingHandRequest.class, ControlV0.SwingHandRequest::parseFrom,
-                ControlHandler::handleSwingHand);
-        registerProto(MinecraftStateV0.ProjectileModelState.class, MinecraftStateV0.ProjectileModelState::parseFrom,
-                MinecraftStateHandler::handleProjectile);
-        registerProto(MinecraftStateV0.VehicleModelState.class, MinecraftStateV0.VehicleModelState::parseFrom,
-                MinecraftStateHandler::handleVehicle);
-        register(AssetTransferV0.AssetFragment.class, AssetTransferV0.AssetFragment::parseFrom,
-                AssetTransferHandler::handleFragmentPayload);
-        registerProto(AssetTransferV0.ModelAssetBatchRequest.class, AssetTransferV0.ModelAssetBatchRequest::parseFrom,
-                AssetTransferHandler::handleBatchRequest);
-        registerProto(AssetTransferV0.ModelAssetBatchFailure.class, AssetTransferV0.ModelAssetBatchFailure::parseFrom,
-                AssetTransferHandler::handleBatchFailure);
-        registerProto(AssetTransferV0.CatalogResyncRequest.class, AssetTransferV0.CatalogResyncRequest::parseFrom,
-                AssetTransferHandler::handleCatalogResync);
-        registerProto(AssetTransferV0.ModelAssetBatchCancel.class, AssetTransferV0.ModelAssetBatchCancel::parseFrom,
-                AssetTransferHandler::handleBatchCancel);
-        registerProto(AssetTransferV0.AssetTransferRelease.class, AssetTransferV0.AssetTransferRelease::parseFrom,
-                AssetTransferHandler::handleTransferRelease);
-
-        CHANNEL.registerMessage(0, ServerboundEnvelope.class, ForgeProtoCodec::encode,
-                buffer -> (ServerboundEnvelope) ForgeProtoCodec.decode(
-                        buffer, MessageDirection.CLIENT_TO_SERVER),
-                ForgeEnvelope::handle, Optional.of(NetworkDirection.PLAY_TO_SERVER));
-        CHANNEL.registerMessage(1, ClientboundEnvelope.class, ForgeProtoCodec::encode,
-                buffer -> (ClientboundEnvelope) ForgeProtoCodec.decode(
-                        buffer, MessageDirection.SERVER_TO_CLIENT),
-                ForgeEnvelope::handle, Optional.of(NetworkDirection.PLAY_TO_CLIENT));
-    }
-
-    private static <T extends ProtoMessage<T>> void registerProto(
-            Class<T> type, ForgeProtoCodec.Parser<T> parser,
-            BiConsumer<T, Supplier<net.minecraftforge.network.NetworkEvent.Context>> handler) {
-        register(type, parser, (payload, context) -> {
-            try (payload) {
-                if (payload.raw().isPresent()) {
-                    throw new IllegalArgumentException("Raw attachment is not valid for " + type.getName());
-                }
-                handler.accept(payload.protobuf(), context);
-            }
-        });
-    }
-
-    private static <T extends ProtoMessage<T>> void register(
-            Class<T> type, ForgeProtoCodec.Parser<T> parser,
-            BiConsumer<NetworkPayload<T>, Supplier<net.minecraftforge.network.NetworkEvent.Context>> handler) {
-        ProtocolMessageSpec<T> spec = ProtocolMessages.REGISTRY.find(type).orElseThrow();
-        ForgeProtocolRegistry.add(new ForgeMessageBinding<>(spec, parser, handler));
-    }
-
-    private static boolean acceptsTransportVersion(String version) {
-        return VERSION.equals(version) || NetworkRegistry.ABSENT.equals(version);
+                && CHANNEL.isRemotePresent(connection);
     }
 
     public static void sendToServer(ProtoMessage<?> message) {
@@ -174,13 +73,7 @@ public final class NetworkHandler {
             payload.close();
             return;
         }
-        var envelope = serverbound(payload);
-        try {
-            CHANNEL.sendToServer(envelope);
-        } catch (Throwable error) {
-            envelope.close();
-            throw error;
-        }
+        send(PacketDistributor.SERVER.noArg(), payload);
     }
 
     public static void sendToClientPlayer(ProtoMessage<?> message, Player player) {
@@ -188,47 +81,88 @@ public final class NetworkHandler {
     }
 
     public static void sendToClientPlayer(NetworkPayload<?> payload, Player player) {
-        var envelope = clientbound(payload);
-        try {
-            CHANNEL.send(PacketDistributor.PLAYER.with(() -> (ServerPlayer) player), envelope);
-        } catch (Throwable error) {
-            envelope.close();
-            throw error;
-        }
+        send(PacketDistributor.PLAYER.with(() -> (ServerPlayer) player), payload);
     }
 
     public static void broadcastToAllPlayers(ProtoMessage<?> message) {
-        CHANNEL.send(PacketDistributor.ALL.noArg(), clientbound(payload(message)));
+        send(PacketDistributor.ALL.noArg(), payload(message));
     }
 
     public static void broadcastToVisiblePlayers(ProtoMessage<?> message, Entity centerEntity) {
-        CHANNEL.send(PacketDistributor.TRACKING_ENTITY.with(() -> centerEntity), clientbound(payload(message)));
+        send(PacketDistributor.TRACKING_ENTITY.with(() -> centerEntity), payload(message));
     }
 
     public static void broadcastToVisiblePlayersAndSelf(ProtoMessage<?> message, Player self) {
-        CHANNEL.send(PacketDistributor.TRACKING_ENTITY_AND_SELF.with(() -> self), clientbound(payload(message)));
+        send(PacketDistributor.TRACKING_ENTITY_AND_SELF.with(() -> self), payload(message));
+    }
+
+    public static void sendFrame(PacketDistributor.PacketTarget target,
+                                 OutboundFrame frame) {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer(frame.size(), frame.size()));
+        var submitted = false;
+        try {
+            ForgeUniBufferIO.write(buffer, frame.borrow());
+            var packet = target.getDirection().buildPacket(Pair.of(buffer, 0), CHANNEL_NAME).getThis();
+            target.send(packet);
+            submitted = true;
+        } finally {
+            if (!submitted) {
+                buffer.release();
+            }
+        }
+    }
+
+    private static void send(PacketDistributor.PacketTarget target, NetworkPayload<?> payload) {
+        try (payload; var protobuf = ProtocolBuffer.serialize(payload.protobuf());
+             var attachment = payload.raw().map(UniBuffer::borrow)
+                     .orElseGet(() -> ArrayBuffer.allocate(0))) {
+            var spec = messageSpec(payload.protobuf(), target.getDirection());
+            spec.attachmentPolicy().validate(attachment.size());
+            try (var frame = FrameCodec.encode(spec.id(), protobuf, attachment)) {
+                sendFrame(target, frame);
+            }
+        }
+    }
+
+    private static ProtocolMessageSpec<?> messageSpec(
+            ProtoMessage<?> message, NetworkDirection direction) {
+        var spec = ProtocolMessages.REGISTRY.find(message.getClass())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Unregistered protocol message type: " + message.getClass().getName()));
+        var expected = direction == NetworkDirection.PLAY_TO_SERVER
+                ? MessageDirection.CLIENT_TO_SERVER : MessageDirection.SERVER_TO_CLIENT;
+        if (spec.direction() != expected) {
+            throw new IllegalArgumentException("Protocol message has the wrong network direction");
+        }
+        return spec;
+    }
+
+    private static void receive(NetworkEvent event, MessageDirection direction) {
+        var context = event.getSource();
+        try (var wire = ForgeUniBufferIO.readNative(
+                event.getPayload(), event.getPayload().readableBytes());
+             var frame = FrameCodec.decode(wire, id -> ProtocolInbound.accepts(id, direction))) {
+            var spec = ProtocolMessages.REGISTRY.find(frame.messageId()).orElseThrow();
+            ProtocolInbound.dispatch(frame, spec, context);
+        } catch (RuntimeException error) {
+            YesSteveModel.LOGGER.warn("Rejected invalid YSM frame", error);
+            if (direction == MessageDirection.SERVER_TO_CLIENT) {
+                var source = context.get();
+                var connection = source.getNetworkManager();
+                source.enqueueWork(() -> {
+                    try {
+                        ClientSessionRuntime.failProtocolSession(connection);
+                    } catch (IllegalStateException ignored) {
+                    }
+                });
+            }
+        } finally {
+            context.get().setPacketHandled(true);
+        }
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})
     private static NetworkPayload<?> payload(ProtoMessage<?> message) {
         return NetworkPayload.protobuf((ProtoMessage) message);
-    }
-
-    private static ServerboundEnvelope serverbound(NetworkPayload<?> payload) {
-        return new ServerboundEnvelope(binding(payload, MessageDirection.CLIENT_TO_SERVER), payload, true);
-    }
-
-    private static ClientboundEnvelope clientbound(NetworkPayload<?> payload) {
-        return new ClientboundEnvelope(binding(payload, MessageDirection.SERVER_TO_CLIENT), payload, true);
-    }
-
-    private static ForgeMessageBinding<?> binding(NetworkPayload<?> payload, MessageDirection direction) {
-        var spec = ProtocolMessages.REGISTRY.find(payload.protobuf().getClass())
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "Unregistered protocol message type: " + payload.protobuf().getClass().getName()));
-        if (spec.direction() != direction) {
-            throw new IllegalArgumentException("Protocol message has the wrong network direction");
-        }
-        return ForgeProtocolRegistry.find(spec.id(), direction).orElseThrow();
     }
 }

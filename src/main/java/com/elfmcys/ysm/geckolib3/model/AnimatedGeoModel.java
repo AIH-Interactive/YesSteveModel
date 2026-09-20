@@ -14,6 +14,7 @@ import java.util.Objects;
 
 public class AnimatedGeoModel {
     public static final int BONE_ATTRIBUTE_COUNT = 14;
+    private static final int HEAD_NAME = StringPool.computeIfAbsent("Head");
     private static final int ALL_HEAD_NAME = StringPool.computeIfAbsent("AllHead");
     private static final int VIEW_LOCATOR_NAME = StringPool.computeIfAbsent("ViewLocator");
 
@@ -26,6 +27,8 @@ public class AnimatedGeoModel {
 
     @Nullable
     private final AnimatedGeoBone firstPersonHead;
+    @Nullable
+    private final AnimatedGeoBone firstPersonAllHead;
     @Nullable
     private final AnimatedGeoBone firstPersonViewLocator;
 
@@ -61,7 +64,8 @@ public class AnimatedGeoModel {
             this.locatorMap.add(group);
         }
 
-        firstPersonHead = boneMap.get(ALL_HEAD_NAME);
+        firstPersonHead = boneMap.get(HEAD_NAME);
+        firstPersonAllHead = boneMap.get(ALL_HEAD_NAME);
         firstPersonViewLocator = boneMap.get(VIEW_LOCATOR_NAME);
     }
 
@@ -91,13 +95,21 @@ public class AnimatedGeoModel {
     }
 
     @Nullable
+    public AnimatedGeoBone getFirstPersonAllHead() {
+        return firstPersonAllHead;
+    }
+
+    @Nullable
     public AnimatedGeoBone getFirstPersonViewLocator() {
         return firstPersonViewLocator;
     }
 
     @NotNull
-    public ReferenceArrayList<AnimatedGeoBone> locatorGroup(GeoLocator type) {
-        return locatorMap.get(type.seq() - 1);
+    public ReferenceList<AnimatedGeoBone> locatorGroup(GeoLocator locator) {
+        if (locator.type() == model.locatorType()) {
+            return locatorMap.get(locator.seq() - 1);
+        }
+        throw new IllegalArgumentException("locator type mismatch");
     }
 
     // TODO

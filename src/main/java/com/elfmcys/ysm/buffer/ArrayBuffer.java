@@ -1,8 +1,7 @@
 package com.elfmcys.ysm.buffer;
 
 import com.elfmcys.ysm.util.ScopeGuard;
-import us.hebi.quickbuf.RepeatedByte;
-
+import java.lang.ref.Reference;
 import java.nio.ByteBuffer;
 
 public interface ArrayBuffer extends UniBuffer {
@@ -25,7 +24,14 @@ public interface ArrayBuffer extends UniBuffer {
     default ArrayBuffer copy() {
         var size = size();
         try (var bufScope = allocateWithScope(size)) {
-            System.arraycopy(array(), arrayOffset(), bufScope.get().array(), bufScope.get().arrayOffset(), size);
+            var target = bufScope.get();
+            try {
+                System.arraycopy(array(), arrayOffset(), target.array(),
+                        target.arrayOffset(), size);
+            } finally {
+                Reference.reachabilityFence(this);
+                Reference.reachabilityFence(target);
+            }
             return bufScope.release();
         }
     }
@@ -68,10 +74,6 @@ public interface ArrayBuffer extends UniBuffer {
         return new ArrayHeapBuffer(buffer, true);
     }
 
-    static ArrayBuffer move(RepeatedByte bytes) {
-        return move(bytes.array(), 0, bytes.length());
-    }
-
     static ArrayBuffer move(byte[] array, int offset, int size) {
         return new ArrayHeapBuffer(array, offset, size, true);
     }
@@ -84,20 +86,25 @@ public interface ArrayBuffer extends UniBuffer {
         return new ArrayHeapBuffer(buffer, false);
     }
 
-    static ArrayBuffer borrow(RepeatedByte bytes) {
-        return borrow(bytes.array(), 0, bytes.length());
-    }
-
     static ArrayBuffer borrow(byte[] array, int offset, int size) {
         return new ArrayHeapBuffer(array, offset, size, false);
     }
 
     static ArrayBuffer copyOf(ByteBuffer data) {
         var result = allocate(data.remaining());
-        if (data.hasArray()) {
-            System.arraycopy(data.array(), data.arrayOffset() + data.position(), result.array(), result.arrayOffset(), result.size());
-        } else {
-            result.nio().put(data.duplicate());
+        try {
+            if (data.hasArray()) {
+                System.arraycopy(data.array(), data.arrayOffset() + data.position(),
+                        result.array(), result.arrayOffset(), result.size());
+            } else {
+                result.nio().put(data.duplicate());
+            }
+        } catch (RuntimeException | Error error) {
+            result.close();
+            throw error;
+        } finally {
+            Reference.reachabilityFence(data);
+            Reference.reachabilityFence(result);
         }
         return result;
     }

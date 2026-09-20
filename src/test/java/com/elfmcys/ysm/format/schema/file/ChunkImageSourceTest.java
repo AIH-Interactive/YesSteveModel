@@ -3,19 +3,26 @@ package com.elfmcys.ysm.format.schema.file;
 import com.elfmcys.ysm.buffer.ArrayBuffer;
 import com.elfmcys.ysm.buffer.BufferType;
 import com.elfmcys.ysm.buffer.UniBuffer;
+import com.elfmcys.ysm.format.AssetLoadException;
 import com.elfmcys.ysm.format.container.AssetContainerReader;
 import com.elfmcys.ysm.format.container.AssetContainerView;
 import com.elfmcys.ysm.format.container.AssetContainerWriter;
 import com.elfmcys.ysm.natives.image.Image;
-import mixel.common.ImageOuterClass;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-
+import com.elfmcys.ysm.proto.mixel.manifest.asset.PBRTextureSet;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -50,6 +57,155 @@ class ChunkImageSourceTest {
     }
 
     @Test
+    void contextualNamedAndBlobSourcesCarryTheExactContextIntoOpen() throws IOException {
+        var seen = new ArrayList<BooleanSupplier>();
+        var reads = new AtomicInteger();
+        var chunks = new ChunkDataSource() {
+            @Override
+            public UniBuffer readPayload(AssetContainerView.ChunkInfo chunk,
+                                         BufferType bufferType) {
+                return ArrayBuffer.move(new byte[]{1, 2, 3, 4});
+            }
+
+            @Override
+            public UniBuffer readPayload(BooleanSupplier cancelled,
+                                         AssetContainerView.ChunkInfo chunk,
+                                         BufferType bufferType) {
+                seen.add(cancelled);
+                reads.incrementAndGet();
+                return readPayload(chunk, bufferType);
+            }
+
+            @Override
+            public UniBuffer readStoredVerified(AssetContainerView.ChunkInfo chunk,
+                                                BufferType bufferType) {
+                return readPayload(chunk, bufferType);
+            }
+        };
+        var namedChunk = new AssetContainerView.ChunkInfo(
+                "named-image", "RGBA", 0, 4, (1 << 16) | 1,
+                0, 0, 0, null);
+        var blobChunk = new AssetContainerView.ChunkInfo(
+                "blob.1", "", 0, 4, 4,
+                0, 0, 0, null);
+
+        BooleanSupplier cancelled = () -> false;
+        try (var named = ChunkImageSource.named(cancelled, chunks, namedChunk).open();
+             var blob = ChunkImageSource.blob(cancelled, chunks, blobChunk,
+                     Image.Format.RGBA, 1, 1).open()) {
+            assertEquals(List.of(cancelled, cancelled), seen);
+            assertEquals(2, reads.get());
+        }
+    }
+
+    @Test
+    void contextualTextureSourcesCarryTheExactContextIntoEveryComponent() throws IOException {
+        var file = tempDir.resolve("pbr-texture.mxc");
+        final int uv;
+        final int normal;
+        final int specular;
+        try (var writer = new TestAssetFileWriter();
+             var data = ArrayBuffer.move(new byte[]{1, 2, 3, 4})) {
+            uv = writer.addBlob(data, 0);
+            normal = writer.addBlob(data, 0);
+            specular = writer.addBlob(data, 0);
+            write(writer, file);
+        }
+
+        var view = readView(file);
+        var delegate = new FileChunkDataSource(file);
+        var seen = new ArrayList<BooleanSupplier>();
+        var chunks = new ChunkDataSource() {
+            @Override
+            public UniBuffer readPayload(AssetContainerView.ChunkInfo chunk,
+                                         BufferType bufferType) throws IOException {
+                return delegate.readPayload(chunk, bufferType);
+            }
+
+            @Override
+            public UniBuffer readPayload(BooleanSupplier cancelled,
+                                         AssetContainerView.ChunkInfo chunk,
+                                         BufferType bufferType) throws IOException {
+                seen.add(cancelled);
+                return delegate.readPayload(chunk, bufferType);
+            }
+
+            @Override
+            public UniBuffer readStoredVerified(AssetContainerView.ChunkInfo chunk,
+                                                BufferType bufferType) throws IOException {
+                return delegate.readStoredVerified(chunk, bufferType);
+            }
+        };
+        var texture = PBRTextureSet.newBuilder()
+                .setUv(image(uv)).setNormal(image(normal)).setSpecular(image(specular))
+                .build();
+
+        BooleanSupplier cancelled = () -> false;
+        var sources = view.textureSources(cancelled, chunks, texture);
+        try (var uvImage = sources.uv().open();
+             var normalImage = sources.normal().open();
+             var specularImage = sources.specular().open()) {
+            assertEquals(List.of(cancelled, cancelled, cancelled), seen);
+        }
+    }
+
+    @Test
+    void cancelledContextRejectsImageOpenBeforeReading() throws IOException {
+        var reads = new AtomicInteger();
+        var chunks = new ChunkDataSource() {
+            @Override
+            public UniBuffer readPayload(AssetContainerView.ChunkInfo chunk,
+                                         BufferType bufferType) {
+                reads.incrementAndGet();
+                return ArrayBuffer.move(new byte[]{1, 2, 3, 4});
+            }
+
+            @Override
+            public UniBuffer readStoredVerified(AssetContainerView.ChunkInfo chunk,
+                                                BufferType bufferType) {
+                return readPayload(chunk, bufferType);
+            }
+        };
+        var chunk = new AssetContainerView.ChunkInfo(
+                "named-image", "RGBA", 0, 4, (1 << 16) | 1,
+                0, 0, 0, null);
+        var cancelled = new AtomicBoolean(true);
+        var source = ChunkImageSource.named(cancelled::get, chunks, chunk);
+
+        assertThrows(CancellationException.class, source::open);
+        assertEquals(0, reads.get());
+    }
+
+    @Test
+    void cancellationAfterSynchronousReadClosesTheReturnedBuffer() {
+        var cancelled = new AtomicBoolean();
+        var returned = new AtomicReference<UniBuffer>();
+        var chunks = new ChunkDataSource() {
+            @Override
+            public UniBuffer readPayload(AssetContainerView.ChunkInfo chunk,
+                                         BufferType bufferType) {
+                var buffer = ArrayBuffer.move(new byte[]{1, 2, 3, 4});
+                returned.set(buffer);
+                cancelled.set(true);
+                return buffer;
+            }
+
+            @Override
+            public UniBuffer readStoredVerified(AssetContainerView.ChunkInfo chunk,
+                                                BufferType bufferType) {
+                throw new AssertionError("unused");
+            }
+        };
+        var chunk = new AssetContainerView.ChunkInfo(
+                "blob.1", "", 0, 4, 4,
+                0, 0, 0, null);
+
+        assertThrows(CancellationException.class,
+                () -> chunks.readPayload(cancelled::get, chunk, BufferType.ARRAY));
+        assertThrows(IllegalStateException.class, () -> returned.get().nio());
+    }
+
+    @Test
     void rejectsConflictingBlobEncodingBeforeReading() {
         var chunk = new AssetContainerView.ChunkInfo(
                 "blob.1", "png", 0, 4, 4,
@@ -78,8 +234,9 @@ class ChunkImageSourceTest {
                 0, 0, 0, null);
         var source = ChunkImageSource.probed(dataSource(new byte[4]), chunk, "PNG");
 
-        var error = assertThrows(IOException.class, source::open);
-        assertEquals("Failed to read image", error.getMessage());
+        var error = assertThrows(AssetLoadException.class, source::open);
+        assertEquals(AssetLoadException.Reason.CONTENT, error.reason());
+        assertEquals("Failed to read image", error.getCause().getMessage());
     }
 
     @Test
@@ -118,11 +275,13 @@ class ChunkImageSourceTest {
         var chunk = view.getAssetView().getChunkInfo(AssetFileConstant.BLOB_CHUNK_PREFIX + blobId);
         assertNotNull(chunk);
         assertEquals("", chunk.encoding());
-        var descriptor = ImageOuterClass.Image.newInstance()
+        var descriptor = com.elfmcys.ysm.proto.mixel.common.Image.newBuilder()
                 .setBlobId(blobId)
                 .setFormat("RGBA")
                 .setWidth(1)
-                .setHeight(1);
+                .setHeight(1)
+                .setFrameCount(1)
+                .build();
 
         try (var image = view.imageBlobSource(new FileChunkDataSource(file), descriptor).open()) {
             assertEquals(Image.Format.RGBA, image.format());
@@ -188,6 +347,12 @@ class ChunkImageSourceTest {
         var bytes = new byte[image.data().size()];
         image.data().nio().get(bytes);
         return bytes;
+    }
+
+    private static com.elfmcys.ysm.proto.mixel.common.Image image(int blobId) {
+        return com.elfmcys.ysm.proto.mixel.common.Image.newBuilder()
+                .setBlobId(blobId).setFormat("RGBA").setWidth(1).setHeight(1)
+                .setFrameCount(1).build();
     }
 
     private static void write(AssetFileWriter writer, Path file) throws IOException {

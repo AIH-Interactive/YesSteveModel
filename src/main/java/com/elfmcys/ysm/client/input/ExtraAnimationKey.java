@@ -4,7 +4,6 @@ import com.elfmcys.ysm.YesSteveModel;
 import com.elfmcys.ysm.capability.PlayerAnimatableCapabilityProvider;
 import com.elfmcys.ysm.client.event.PlayerMoveEvent;
 import com.elfmcys.ysm.client.gui.AnimationRouletteScreen;
-import com.elfmcys.ysm.info.ModelProperties;
 import com.elfmcys.ysm.network.forge.ClientProtocolGateway;
 import com.elfmcys.ysm.util.InputCheckUtil;
 import com.google.common.collect.Lists;
@@ -62,18 +61,19 @@ public class ExtraAnimationKey {
                 player.getCapability(PlayerAnimatableCapabilityProvider.CAP).ifPresent(cap -> {
                     var model = cap.getModelRenderTarget();
                     int index = EXTRA_ANIMATION_KEYS.indexOf(key);
-                    ModelProperties properties = model.info().properties();
-                    var animationMap = properties.extraAnimationOrderMap();
-                    if (animationMap.size() > index) {
-                        String keyName = animationMap.getKeyAt(index);
+                    var info = model.info();
+                    var animations = info.getExtraAnimations();
+                    if (animations.size() > index) {
+                        String keyName = animations.get(index).key();
                         if ("#return".equals(keyName)) {
                             // #return 为停止播放轮盘动画
                             ClientProtocolGateway.stopSelfAnimation();
-                        } else if (keyName.startsWith("#") && properties.extraAnimationClassifyMap().containsKey(keyName.substring(1))) {
+                        } else if (keyName.startsWith("#")
+                                && info.getExtraAnimationClassifications().containsKey(keyName.substring(1))) {
                             addRootClassify(keyName.substring(1));
                             AnimationRouletteScreen screen = new AnimationRouletteScreen(
-                                    properties.extraAnimationButtonsMap(),
-                                    properties.extraAnimationClassifyMap(),
+                                    info.getExtraAnimationButtons(),
+                                    info.getExtraAnimationClassifications(),
                                     model, cap
                             );
                             Minecraft.getInstance().setScreen(screen);

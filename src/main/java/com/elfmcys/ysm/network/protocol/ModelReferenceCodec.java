@@ -1,40 +1,42 @@
 package com.elfmcys.ysm.network.protocol;
 
 import com.elfmcys.ysm.model.domain.Hash256;
-import com.elfmcys.ysm.proto.network.protocol.v0.CommonV0;
+import com.elfmcys.ysm.proto.network.ModelReference;
+import com.elfmcys.ysm.util.ProtoBytes;
+import java.nio.ByteBuffer;
 import org.jetbrains.annotations.Nullable;
 
 public final class ModelReferenceCodec {
     private ModelReferenceCodec() {
     }
 
-    public static void write(CommonV0.ModelReference target,
-                             @Nullable Hash256 hash,
-                             @Nullable Hash256 builtinDefaultHash) {
+    public static ModelReference create(
+            @Nullable Hash256 hash, @Nullable Hash256 builtinDefaultHash) {
+        var builder = ModelReference.newBuilder();
         if (hash == null || hash.equals(builtinDefaultHash)) {
-            target.setBuiltinDefault(true);
+            builder.setBuiltinDefault(true);
         } else {
-            target.setModelHash(hash.bytes());
+            builder.setModelHash(ByteBuffer.wrap(hash.bytes()));
         }
+        return builder.build();
     }
 
     /** Returns null for the intrinsic builtin default. */
-    public static @Nullable Hash256 read(CommonV0.ModelReference value) {
+    public static @Nullable Hash256 read(ModelReference value) {
         if (value == null) {
             throw new IllegalArgumentException("Missing model reference");
         }
-        if (value.hasBuiltinDefault() && value.getBuiltinDefault()) {
+        if (value.hasBuiltinDefault() && value.builtinDefault()) {
             return null;
         }
-        if (!value.hasModelHash() || value.getModelHash().length() != Hash256.SIZE) {
+        if (!value.hasModelHash() || value.modelHash().remaining() != Hash256.SIZE) {
             throw new IllegalArgumentException("Invalid model reference");
         }
-        return new Hash256(value.getModelHash().array(), 0,
-                value.getModelHash().length());
+        return new Hash256(ProtoBytes.copy(value.modelHash()));
     }
 
-    public static boolean valid(CommonV0.ModelReference value) {
-        return value != null && (value.hasBuiltinDefault() && value.getBuiltinDefault()
-                || value.hasModelHash() && value.getModelHash().length() == Hash256.SIZE);
+    public static boolean valid(ModelReference value) {
+        return value != null && (value.hasBuiltinDefault() && value.builtinDefault()
+                || value.hasModelHash() && value.modelHash().remaining() == Hash256.SIZE);
     }
 }

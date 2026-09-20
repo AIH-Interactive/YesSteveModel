@@ -34,8 +34,11 @@ import com.elfmcys.ysm.client.input.DebugAnimationKey;
 import com.elfmcys.ysm.client.input.ExtraAnimationKey;
 import com.elfmcys.ysm.client.input.ExtraPlayerConfigKey;
 import com.elfmcys.ysm.client.input.PlayerModelScreenKey;
-import com.elfmcys.ysm.client.model.PlayerLocator;
-import com.elfmcys.ysm.client.model.ClientModelService;
+import com.elfmcys.ysm.client.model.locator.FirstPersonLocator;
+import com.elfmcys.ysm.client.model.locator.PlayerLocator;
+import com.elfmcys.ysm.model.service.ClientModelService;
+import com.elfmcys.ysm.client.model.locator.ProjectileLocator;
+import com.elfmcys.ysm.client.model.locator.VehicleLocator;
 import com.elfmcys.ysm.config.ClientConfig;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RegisterGuiOverlaysEvent;
@@ -99,6 +102,10 @@ public class ClientSetupEvent {
 
             // Model render target data is now owned by the Java model service.
             PlayerLocator.init();
+            FirstPersonLocator.init();
+            ProjectileLocator.init();
+            VehicleLocator.init();
+
             ClientModelService.start();
         });
     }

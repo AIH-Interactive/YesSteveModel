@@ -1,36 +1,70 @@
 package com.elfmcys.ysm.model.storage;
 
 import com.elfmcys.ysm.YesSteveModel;
-
+import com.elfmcys.ysm.format.AssetLoadException;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 
-/** Cross-process, immutable-object writer used by converted, remote and baked caches. */
+/**
+ * Cross-process, immutable-object writer used by the preview, converted and baked caches. One
+ * instance guards one physical store root: targets must stay inside it and its key locks live
+ * under {@code <root>/locks}, so caches in different roots never share a lock directory.
+ */
 public final class AtomicSharedCache {
     private static final ConcurrentHashMap<Path, JvmLock> JVM_LOCKS =
             new ConcurrentHashMap<>();
+    private static final String LOCK_SUFFIX = ".lck";
 
-    private final SharedCachePaths paths;
+    /** Key-lock directory inside one shared-cache root. */
+    static final String LOCK_DIRECTORY = "locks";
 
-    public AtomicSharedCache(SharedCachePaths paths) {
-        this.paths = paths;
+    private final Path cacheRoot;
+    private final AtomicMove atomicMove;
+
+    public AtomicSharedCache(Path cacheRoot) {
+        this(cacheRoot, AtomicSharedCache::moveCommitted);
+    }
+
+    AtomicSharedCache(Path cacheRoot, AtomicMove atomicMove) {
+        this.cacheRoot = Objects.requireNonNull(cacheRoot, "cacheRoot")
+                .toAbsolutePath().normalize();
+        this.atomicMove = Objects.requireNonNull(atomicMove, "atomicMove");
+    }
+
+    /** Key-lock directory of one shared-cache root. */
+    static Path locksRoot(Path cacheRoot) {
+        return cacheRoot.resolve(LOCK_DIRECTORY);
     }
 
     public void materialize(String namespace, String key, Path target,
                             CacheValidator validator, CacheWriter writer) throws IOException {
+        materialize(namespace, key, target, validator, writer, true);
+    }
+
+    /** Keeps an old exact object addressable until its verified replacement can commit. */
+    public void materializeReplacing(String namespace, String key, Path target,
+                                     CacheValidator validator, CacheWriter writer)
+            throws IOException {
+        materialize(namespace, key, target, validator, writer, false);
+    }
+
+    private void materialize(String namespace, String key, Path target,
+                             CacheValidator validator, CacheWriter writer,
+                             boolean quarantineInvalid) throws IOException {
         target = checkedTarget(target);
         if (isValid(target, validator)) {
             YesSteveModel.LOGGER.debug("Shared cache hit namespace={} key={} target={}",
@@ -46,27 +80,26 @@ public final class AtomicSharedCache {
                             namespace, key, checked);
                     return null;
                 }
-                if (quarantineInvalid(checked)) {
+                if (quarantineInvalid && quarantineInvalid(checked)) {
                     YesSteveModel.LOGGER.debug(
                             "Quarantined invalid shared cache object namespace={} key={} target={}",
                             namespace, key, checked);
                 }
                 Files.createDirectories(checked.getParent());
-                Files.createDirectories(paths.temporary());
-
                 var temporary = checked.resolveSibling(checked.getFileName() + ".tmp-"
                         + ProcessHandle.current().pid() + "-" + UUID.randomUUID());
                 var startedAt = System.nanoTime();
                 try {
                     writer.write(temporary);
                     if (!isValid(temporary, validator)) {
-                        throw new IOException("Cache writer produced an invalid object: " + checked);
+                        throw AssetLoadException.content(
+                                "Cache writer produced an invalid object: " + checked);
                     }
-                    moveCommitted(temporary, checked);
+                    atomicMove.move(temporary, checked);
                     YesSteveModel.LOGGER.debug(
                             "Materialized shared cache object namespace={} key={} target={} elapsedMs={}",
                             namespace, key, checked,
-                            java.time.Duration.ofNanos(System.nanoTime() - startedAt).toMillis());
+                            Duration.ofNanos(System.nanoTime() - startedAt).toMillis());
                 } finally {
                     Files.deleteIfExists(temporary);
                 }
@@ -92,14 +125,14 @@ public final class AtomicSharedCache {
 
     Path checkedTarget(Path target) {
         var checked = target.toAbsolutePath().normalize();
-        if (!checked.startsWith(paths.root())) {
-            throw new IllegalArgumentException("Shared cache target escapes ~/.ysm/unstable: " + target);
+        if (!checked.startsWith(cacheRoot)) {
+            throw new IllegalArgumentException("Shared cache target escapes its root: " + target);
         }
-        var current = paths.root();
+        var current = cacheRoot;
         if (Files.isSymbolicLink(current)) {
             throw new IllegalArgumentException("Shared cache root must not be a link: " + current);
         }
-        for (var part : paths.root().relativize(checked)) {
+        for (var part : cacheRoot.relativize(checked)) {
             current = current.resolve(part);
             if (Files.isSymbolicLink(current)) {
                 throw new IllegalArgumentException(
@@ -111,7 +144,8 @@ public final class AtomicSharedCache {
 
     private Path lockPath(String namespace, String key) {
         var digest = securityDigest((namespace + "\0" + key).getBytes(StandardCharsets.UTF_8));
-        return paths.locks().resolve(sanitize(namespace)).resolve(HexFormat.of().formatHex(digest) + ".lck");
+        return locksRoot(cacheRoot).resolve(sanitize(namespace))
+                .resolve(HexFormat.of().formatHex(digest) + LOCK_SUFFIX);
     }
 
     private static boolean isValid(Path path, CacheValidator validator) throws IOException {
@@ -122,17 +156,15 @@ public final class AtomicSharedCache {
         if (!Files.exists(target)) {
             return false;
         }
-        var quarantine = target.resolveSibling(target.getFileName() + ".corrupt-" + Instant.now().toEpochMilli());
+        var quarantine = target.resolveSibling(target.getFileName() + ".corrupt-"
+                + Instant.now().toEpochMilli());
         Files.move(target, quarantine, StandardCopyOption.REPLACE_EXISTING);
         return true;
     }
 
-    static void moveCommitted(Path temporary, Path target) throws IOException {
-        try {
-            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } catch (AtomicMoveNotSupportedException ignored) {
-            Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
-        }
+    public static void moveCommitted(Path temporary, Path target) throws IOException {
+        Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING);
     }
 
     private static String sanitize(String value) {
@@ -152,6 +184,11 @@ public final class AtomicSharedCache {
     @FunctionalInterface
     public interface LockedOperation<T> {
         T run() throws IOException;
+    }
+
+    @FunctionalInterface
+    interface AtomicMove {
+        void move(Path temporary, Path target) throws IOException;
     }
 
     private static byte[] securityDigest(byte[] input) {

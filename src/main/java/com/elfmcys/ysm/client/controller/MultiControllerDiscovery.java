@@ -1,7 +1,7 @@
 package com.elfmcys.ysm.client.controller;
 
 import com.elfmcys.ysm.client.entity.CustomEntity;
-import com.elfmcys.ysm.client.model.CommonAsset;
+import com.elfmcys.ysm.model.resource.client.CommonAsset;
 import com.elfmcys.ysm.geckolib3.core.controller.IAnimationController;
 import it.unimi.dsi.fastutil.objects.Object2ReferenceMaps;
 import it.unimi.dsi.fastutil.objects.ObjectRBTreeSet;

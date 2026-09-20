@@ -6,7 +6,7 @@ package mixel.manifest.asset;
 import "common/image.proto";
 
 message PBRTextureSet {
-  mixel.common.Image uv = 1;
-  optional mixel.common.Image normal = 2;
-  optional mixel.common.Image specular = 3;
+  common.Image uv = 1;
+  optional common.Image normal = 2;
+  optional common.Image specular = 3;
 }

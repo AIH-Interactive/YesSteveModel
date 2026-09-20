@@ -3,29 +3,32 @@ package com.elfmcys.ysm.client.gui.button;
 import com.elfmcys.ysm.YesSteveModel;
 import com.elfmcys.ysm.client.animation.AnimationRegister;
 import com.elfmcys.ysm.client.gui.CustomGuiPlayerEntity;
-import com.elfmcys.ysm.client.model.ClientAssetBatch;
-import com.elfmcys.ysm.client.model.ModelRenderTarget;
-import com.elfmcys.ysm.client.model.catalog.CatalogModelMetadata;
-import com.elfmcys.ysm.client.model.catalog.ClientCatalogEntry;
-import com.elfmcys.ysm.client.model.ClientModelService;
-import com.elfmcys.ysm.client.model.ModelRenderTargetLease;
+import com.elfmcys.ysm.model.resource.client.asset.ClientAssetBatch;
+import com.elfmcys.ysm.model.resource.client.AcquireResult;
+import com.elfmcys.ysm.model.resource.client.ModelRenderTarget;
+import com.elfmcys.ysm.model.catalog.client.entry.CatalogModelMetadata;
+import com.elfmcys.ysm.model.catalog.client.entry.ClientCatalogEntry;
+import com.elfmcys.ysm.model.service.ClientModelService;
+import com.elfmcys.ysm.model.resource.client.ResourceLease;
+import com.elfmcys.ysm.model.resource.client.ResourceRequest;
 import com.elfmcys.ysm.client.texture.CustomTexture;
 import com.elfmcys.ysm.client.texture.CustomTextureManager;
 import com.elfmcys.ysm.client.texture.TextureHolder;
 import com.elfmcys.ysm.natives.image.ImageSource;
-import com.elfmcys.ysm.model.source.ModelAssetSelector;
-import com.elfmcys.ysm.task.TaskContext;
+import com.elfmcys.ysm.model.resource.client.asset.ModelAssetSelector;
 import net.minecraft.client.Minecraft;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
 final class CatalogModelCardState implements AutoCloseable {
     private final ClientModelService service = ClientModelService.instance();
-    private final TaskContext context;
     private final ClientAssetBatch assets;
     private final ClientCatalogEntry entry;
     private final CatalogModelMetadata metadata;
@@ -33,10 +36,9 @@ final class CatalogModelCardState implements AutoCloseable {
     private final CatalogModelPreviewAnimationState previewAnimations =
             new CatalogModelPreviewAnimationState();
 
-    @Nullable
-    private ModelRenderTargetLease lease;
-    @Nullable
-    private ModelRenderTarget renderTarget;
+    private final TargetState targetState;
+    private CompletableFuture<Optional<ResourceLease>> cacheProbe;
+    private CompletableFuture<Optional<ResourceLease>> hoverLoad;
     @Nullable
     private CustomTexture previewTexture;
     @Nullable
@@ -50,22 +52,30 @@ final class CatalogModelCardState implements AutoCloseable {
     @Nullable
     private TextureHolder foreground;
     @Nullable
-    private Throwable loadError;
+    private Throwable presentationFailure;
+    private long activeHoverGeneration = -1;
+    private long attemptedHoverGeneration = -1;
     private boolean closed;
 
-    CatalogModelCardState(TaskContext context, ClientAssetBatch assets, ClientCatalogEntry entry,
+    CatalogModelCardState(ClientAssetBatch assets, ClientCatalogEntry entry,
                           CatalogModelMetadata metadata, CustomGuiPlayerEntity entity) {
-        this.context = context;
         this.assets = assets;
         this.entry = entry;
         this.metadata = metadata;
         this.entity = entity;
-        startLoading();
+        targetState = new TargetState(
+                service.resourceRequest(entry.modelHash(), metadata.defaultTexture()));
+        requestPresentation();
+        tryReady();
+        if (!targetState.hasInterest()) {
+            startCacheProbe();
+        }
     }
 
     @Nullable
     ModelRenderTarget renderTarget() {
-        return renderTarget;
+        pollRenderTarget();
+        return targetState.renderTarget();
     }
 
     @Nullable
@@ -85,12 +95,8 @@ final class CatalogModelCardState implements AutoCloseable {
 
     @Nullable
     Throwable loadError() {
-        if (lease != null && !lease.isCurrent()) {
-            lease.close();
-            lease = null;
-            renderTarget = null;
-            loadError = new IllegalStateException("The model content changed while this card was open");
-        }
+        pollRenderTarget();
+        var loadError = targetState.failure();
         if (loadError == null) {
             loadError = textureFailure(previewTexture);
         }
@@ -100,80 +106,126 @@ final class CatalogModelCardState implements AutoCloseable {
         if (loadError == null) {
             loadError = textureFailure(foregroundTexture);
         }
+        if (loadError == null) {
+            loadError = presentationFailure;
+        }
+        var renderTarget = targetState.renderTarget();
         if (loadError == null && renderTarget != null && renderTarget.playerResources() != null) {
             var resources = renderTarget.playerResources();
-            if (resources.defaultVariant().texture() instanceof CustomTexture texture) {
-                loadError = texture.failure().orElse(null);
-            }
-            if (loadError == null && (resources.animations().hasFailures()
-                    || resources.fpArmAnimations().hasFailures())) {
+            if (resources.animations().hasFailures()
+                    || resources.fpArmAnimations().hasFailures()) {
                 loadError = new IllegalStateException("One or more preview animations failed to load");
             }
         }
-        return loadError;
+        if (loadError != null) {
+            targetState.fail(loadError);
+        }
+        return targetState.failure();
     }
 
     void updatePreviewAnimations(boolean hovered, boolean focused, long now) {
-        if (renderTarget != null) {
+        pollRenderTarget();
+        if (targetState.renderTarget() != null) {
             previewAnimations.apply(entity.getPreviewInfo(), hovered, focused, now);
         }
+    }
+
+    void updateDemand(long hoverGeneration, boolean bakeEligible) {
+        if (closed) {
+            return;
+        }
+        pollRenderTarget();
+        tryReady();
+        if (!bakeEligible) {
+            if (activeHoverGeneration != -1 && activeHoverGeneration != hoverGeneration) {
+                activeHoverGeneration = -1;
+                if (hoverLoad != null) {
+                    hoverLoad.cancel(false);
+                    hoverLoad = null;
+                }
+                targetState.cancelPending();
+            }
+            return;
+        }
+        activeHoverGeneration = hoverGeneration;
+        if (targetState.renderTarget() != null || targetState.failure() != null
+                || attemptedHoverGeneration == hoverGeneration || cacheProbe != null) {
+            return;
+        }
+        attemptedHoverGeneration = hoverGeneration;
+        startOfflineLoad(hoverGeneration);
     }
 
     private static @Nullable Throwable textureFailure(@Nullable CustomTexture texture) {
         return texture == null ? null : texture.failure().orElse(null);
     }
 
-    private void startLoading() {
+    private void requestPresentation() {
         requestGuiAssets();
-        if (service.isLoaded(entry.modelHash(), metadata.defaultTexture())) {
-            requestRenderTarget();
-            return;
-        }
         assets.preview(entry.modelHash()).whenComplete((data, error) -> Minecraft.getInstance().execute(() -> {
             if (closed) {
                 return;
             }
             if (data != null) {
                 previewTexture = service.createTexture(data);
-                preview = CustomTextureManager.register(previewTexture, true, 10 * 20);
+                preview = CustomTextureManager.register(previewTexture, 10 * 20);
             } else if (!isCancellation(error)) {
-                loadError = unwrap(error);
-            }
-            if (entry.locallyAvailable()) {
-                requestRenderTarget();
+                presentationFailure = unwrap(error);
             }
         }));
     }
 
-    private void requestRenderTarget() {
-        service.acquire(context, entry.modelHash(), metadata.defaultTexture())
-                .whenComplete((nextLease, error) -> Minecraft.getInstance().execute(() -> {
-                    if (nextLease == null) {
-                        if (!isCancellation(error)) {
-                            loadError = unwrap(error);
-                        }
-                        return;
-                    }
-                    if (closed) {
-                        nextLease.close();
-                        return;
-                    }
-                    applyRenderTarget(nextLease, nextLease.renderTarget());
-                }));
+    private void tryReady() {
+        if (targetState.hasInterest() || targetState.failure() != null) {
+            return;
+        }
+        targetState.accept(service.findReady(targetState.request()), null);
+        pollRenderTarget();
     }
 
-    private void applyRenderTarget(@Nullable ModelRenderTargetLease nextLease, ModelRenderTarget nextRenderTarget) {
-        if (lease != null) {
-            lease.close();
-        }
-        lease = nextLease;
-        renderTarget = nextRenderTarget;
+    private void startCacheProbe() {
+        cacheProbe = service.getOrStartCached(targetState.request());
+        var current = cacheProbe;
+        current.whenComplete((acquired, error) -> Minecraft.getInstance().execute(() -> {
+            if (cacheProbe == current) {
+                cacheProbe = null;
+            }
+            if (closed) {
+                cancelAcquired(acquired);
+                return;
+            }
+            targetState.accept(acquired, error);
+            pollRenderTarget();
+        }));
+    }
+
+    private void startOfflineLoad(long generation) {
+        hoverLoad = service.getOrStartOffline(targetState.request());
+        var current = hoverLoad;
+        current.whenComplete((acquired, error) -> Minecraft.getInstance().execute(() -> {
+            if (hoverLoad == current) {
+                hoverLoad = null;
+            }
+            if (closed || activeHoverGeneration != generation) {
+                cancelAcquired(acquired);
+                return;
+            }
+            targetState.accept(acquired, error);
+            pollRenderTarget();
+        }));
+    }
+
+    private void pollRenderTarget() {
+        targetState.poll(this::applyRenderTarget);
+    }
+
+    private void applyRenderTarget(ModelRenderTarget nextRenderTarget) {
         entity.reset();
         entity.updateModelAndTexture(entry.modelHash(), metadata.defaultTexture());
         var playerResources = Objects.requireNonNull(nextRenderTarget.playerResources(),
                 "Catalog model card requires a player render target");
         var animations = playerResources.animations();
-        previewAnimations.configure(nextRenderTarget.info().properties().previewAnimation(),
+        previewAnimations.configure(nextRenderTarget.info().getSettings().previewAnimation().orElse(""),
                 animations.containsKey(AnimationRegister.HOVER),
                 animations.containsKey(AnimationRegister.HOVER_FADEOUT),
                 () -> {
@@ -184,7 +236,7 @@ final class CatalogModelCardState implements AutoCloseable {
     }
 
     private void requestGuiAssets() {
-        var settings = entry.displayDescriptor().view().getManifest().getInfo().getSettings();
+        var settings = entry.displayRepresentation().view().getManifest().info().settings();
         if (settings.hasGuiBackground()) {
             requestGuiAsset(ModelAssetSelector.PresentationAsset.GUI_BACKGROUND, false);
         }
@@ -211,7 +263,7 @@ final class CatalogModelCardState implements AutoCloseable {
             return;
         }
         var texture = service.createTexture(source);
-        var holder = CustomTextureManager.register(texture, true, 10 * 20);
+        var holder = CustomTextureManager.register(texture, 10 * 20);
         if (foregroundAsset) {
             foregroundTexture = texture;
             foreground = holder;
@@ -224,19 +276,29 @@ final class CatalogModelCardState implements AutoCloseable {
     @Override
     public void close() {
         closed = true;
+        if (cacheProbe != null) {
+            cacheProbe.cancel(false);
+            cacheProbe = null;
+        }
+        if (hoverLoad != null) {
+            hoverLoad.cancel(false);
+            hoverLoad = null;
+        }
         entity.reset();
         previewAnimations.reset();
-        if (lease != null) {
-            lease.close();
-            lease = null;
-        }
+        targetState.close();
         previewTexture = release(previewTexture);
         backgroundTexture = release(backgroundTexture);
         foregroundTexture = release(foregroundTexture);
         preview = null;
         background = null;
         foreground = null;
-        renderTarget = null;
+    }
+
+    private static void cancelAcquired(@Nullable Optional<ResourceLease> acquired) {
+        if (acquired != null) {
+            acquired.ifPresent(ResourceLease::cancelPending);
+        }
     }
 
     private static @Nullable CustomTexture release(@Nullable CustomTexture texture) {
@@ -244,6 +306,137 @@ final class CatalogModelCardState implements AutoCloseable {
             CustomTextureManager.release(texture);
         }
         return null;
+    }
+
+    static final class TargetState implements AutoCloseable {
+        private final ResourceRequest request;
+        @Nullable
+        private ResourceLease lease;
+        @Nullable
+        private ModelRenderTarget renderTarget;
+        @Nullable
+        private Throwable failure;
+        private boolean closed;
+
+        TargetState(ResourceRequest request) {
+            this.request = Objects.requireNonNull(request, "request");
+        }
+
+        ResourceRequest request() {
+            return request;
+        }
+
+        void accept(@Nullable Optional<ResourceLease> acquired, @Nullable Throwable error) {
+            var next = acquired == null ? null : acquired.orElse(null);
+            if (closed) {
+                cancelPending(next);
+                return;
+            }
+            if (error != null) {
+                cancelPending(next);
+                if (!isCancellation(error)) {
+                    fail(unwrap(error));
+                }
+                return;
+            }
+            if (next == null) {
+                return;
+            }
+            final boolean current;
+            try {
+                current = next.isCurrent(request);
+            } catch (RuntimeException failure) {
+                next.cancelPending();
+                fail(failure);
+                return;
+            } catch (Error fatal) {
+                next.cancelPending();
+                throw fatal;
+            }
+            if (failure != null || lease != null || !current) {
+                next.cancelPending();
+                return;
+            }
+            lease = next;
+        }
+
+        @Nullable ModelRenderTarget poll(Consumer<ModelRenderTarget> ready) {
+            if (closed || failure != null || lease == null) {
+                return renderTarget;
+            }
+            final boolean current;
+            try {
+                current = lease.isCurrent(request);
+            } catch (RuntimeException failure) {
+                fail(failure);
+                return null;
+            }
+            if (!current) {
+                releaseLease();
+                renderTarget = null;
+                return null;
+            }
+            if (renderTarget != null) {
+                return renderTarget;
+            }
+            var result = lease.poll();
+            if (result instanceof AcquireResult.Failed failed) {
+                failure = failed.failure().cause();
+                releaseLease();
+            } else if (result instanceof AcquireResult.Ready loaded) {
+                renderTarget = loaded.target();
+                ready.accept(renderTarget);
+            }
+            return renderTarget;
+        }
+
+        @Nullable ModelRenderTarget renderTarget() {
+            return renderTarget;
+        }
+
+        @Nullable Throwable failure() {
+            return failure;
+        }
+
+        boolean hasInterest() {
+            return lease != null || renderTarget != null;
+        }
+
+        void cancelPending() {
+            if (lease != null && lease.poll() instanceof AcquireResult.Pending) {
+                releaseLease();
+            }
+        }
+
+        void fail(Throwable error) {
+            if (failure == null) {
+                failure = Objects.requireNonNull(error, "error");
+            }
+            releaseLease();
+            renderTarget = null;
+        }
+
+        @Override
+        public void close() {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            releaseLease();
+            renderTarget = null;
+        }
+
+        private void releaseLease() {
+            var current = lease;
+            lease = null;
+            cancelPending(current);
+        }
+
+        private static void cancelPending(@Nullable ResourceLease lease) {
+            if (lease != null) {
+                lease.cancelPending();
+            }
+        }
     }
 
     private static Throwable unwrap(@Nullable Throwable error) {

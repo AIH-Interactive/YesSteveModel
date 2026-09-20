@@ -5,17 +5,19 @@ import com.elfmcys.ysm.client.texture.CustomPBRTextureSet;
 import com.elfmcys.ysm.info.type.PBRTextureType;
 import com.elfmcys.ysm.natives.render.VertexFormatType;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import java.io.IOException;
+import java.util.Optional;
+import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 import net.irisshaders.iris.api.v0.IrisApi;
 import net.irisshaders.iris.texture.pbr.loader.PBRTextureLoader;
 import net.irisshaders.iris.texture.pbr.loader.PBRTextureLoaderRegistry;
 import net.irisshaders.iris.uniforms.CapturedRenderingState;
 import net.irisshaders.iris.vertices.IrisVertexFormats;
+import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraftforge.fml.ModList;
 import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
-
-import java.util.Optional;
-import java.util.function.LongSupplier;
 
 import static com.elfmcys.ysm.natives.render.VertexFormatType.IRIS_54;
 import static com.elfmcys.ysm.natives.render.VertexFormatType.IRIS_55;
@@ -25,6 +27,7 @@ import static com.elfmcys.ysm.natives.render.VertexFormatType.IRIS_56_AR;
 public class IrisCompat {
     private static final String MOD_ID = "oculus";
     private static boolean INSTALLED = false;
+    private static boolean MODERN = false;
     private static LongSupplier ENTITY_ID_GETTER;
     private static VertexFormat ENTITY_FORMAT;
 
@@ -32,10 +35,12 @@ public class IrisCompat {
         ModList.get().getModContainerById(MOD_ID).ifPresent(mod -> {
             try {
                 if (mod.getModInfo().getVersion().compareTo(new DefaultArtifactVersion("1.7.0")) >= 0) {
+                    MODERN = true;
                     ENTITY_FORMAT = IrisVertexFormats.ENTITY;
                     ENTITY_ID_GETTER = IrisCompat::getEntityIdModern;
                     PBRLoader.register();
                 } else {
+                    MODERN = false;
                     ENTITY_FORMAT = net.coderbot.iris.vertices.IrisVertexFormats.ENTITY;
                     ENTITY_ID_GETTER = IrisCompat::getEntityIdLegacy;
                     LegacyPBRLoader.register();
@@ -48,6 +53,7 @@ public class IrisCompat {
                 ENTITY_FORMAT = null;
                 ENTITY_ID_GETTER = null;
                 INSTALLED = false;
+                MODERN = false;
             }
         });
     }
@@ -76,6 +82,57 @@ public class IrisCompat {
         return INSTALLED && IrisApi.getInstance().isRenderingShadowPass();
     }
 
+    public static void requirePbrTextures(
+            CustomPBRTextureSet texture,
+            Consumer<AbstractTexture> hostOwnership) {
+        if (!INSTALLED) {
+            throw new IllegalStateException("Oculus PBR integration is not installed");
+        }
+        if (MODERN) {
+            var holder = net.irisshaders.iris.texture.pbr.PBRTextureManager.INSTANCE
+                    .getOrLoadHolder(texture.getId());
+            requireExpected(texture, holder.normalTexture(), holder.specularTexture(),
+                    hostOwnership);
+        } else {
+            var holder = net.coderbot.iris.texture.pbr.PBRTextureManager.INSTANCE
+                    .getOrLoadHolder(texture.getId());
+            requireExpected(texture, holder.getNormalTexture(), holder.getSpecularTexture(),
+                    hostOwnership);
+        }
+    }
+
+    private static void requireExpected(
+            CustomPBRTextureSet texture,
+            AbstractTexture actualNormal,
+            AbstractTexture actualSpecular,
+            Consumer<AbstractTexture> hostOwnership) {
+        IllegalStateException failure = null;
+        if (texture.getNormal() != null) {
+            if (texture.getNormal() == actualNormal) {
+                hostOwnership.accept(texture.getNormal());
+            } else {
+                failure = new IllegalStateException(
+                        "Oculus did not adopt the expected normal texture");
+            }
+        }
+        if (texture.getSpecular() != null) {
+            if (texture.getSpecular() == actualSpecular) {
+                hostOwnership.accept(texture.getSpecular());
+            } else {
+                var specularFailure = new IllegalStateException(
+                        "Oculus did not adopt the expected specular texture");
+                if (failure == null) {
+                    failure = specularFailure;
+                } else {
+                    failure.addSuppressed(specularFailure);
+                }
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
+    }
+
     private static long getEntityIdLegacy() {
         short s0 = (short) net.coderbot.iris.uniforms.CapturedRenderingState.INSTANCE.getCurrentRenderedEntity();
         short s1 = (short) net.coderbot.iris.uniforms.CapturedRenderingState.INSTANCE.getCurrentRenderedBlockEntity();
@@ -102,6 +159,7 @@ public class IrisCompat {
 
         @Override
         public void load(CustomPBRTextureSet texture, ResourceManager resourceManager, PBRTextureConsumer pbrTextureConsumer) {
+            loadPbr(texture, resourceManager);
             var normalTexture = texture.getPBRTextures().get(PBRTextureType.NORMAL);
             if (normalTexture != null) {
                 pbrTextureConsumer.acceptNormalTexture(normalTexture);
@@ -125,6 +183,7 @@ public class IrisCompat {
 
         @Override
         public void load(CustomPBRTextureSet texture, ResourceManager resourceManager, PBRTextureLoader.PBRTextureConsumer pbrTextureConsumer) {
+            loadPbr(texture, resourceManager);
             var normalTexture = texture.getPBRTextures().get(PBRTextureType.NORMAL);
             if (normalTexture != null) {
                 pbrTextureConsumer.acceptNormalTexture(normalTexture);
@@ -137,6 +196,14 @@ public class IrisCompat {
 
         public static void register() {
             PBRTextureLoaderRegistry.INSTANCE.register(CustomPBRTextureSet.class, INSTANCE);
+        }
+    }
+
+    private static void loadPbr(CustomPBRTextureSet texture, ResourceManager resourceManager) {
+        try {
+            texture.loadPbr(resourceManager);
+        } catch (IOException error) {
+            throw new IllegalStateException("Failed to load model PBR textures", error);
         }
     }
 }

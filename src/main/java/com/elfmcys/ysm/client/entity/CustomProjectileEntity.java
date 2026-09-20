@@ -1,16 +1,14 @@
 package com.elfmcys.ysm.client.entity;
 
-import com.elfmcys.ysm.client.model.ModelRenderTarget;
-import com.elfmcys.ysm.client.model.ProjectileModelResources;
-import com.elfmcys.ysm.client.model.ClientModelService;
-import com.elfmcys.ysm.client.model.ModelRenderTargetLease;
-import com.elfmcys.ysm.client.texture.CustomTextureManager;
-import com.elfmcys.ysm.client.texture.TextureHolder;
 import com.elfmcys.ysm.geckolib3.core.builder.Animation;
 import com.elfmcys.ysm.geckolib3.core.builder.controller.AnimationControllerData;
 import com.elfmcys.ysm.geckolib3.geo.render.built.GeoModel;
-import mixel.manifest.asset.RenderTargetOuterClass;
-import net.minecraft.client.renderer.texture.MissingTextureAtlasSprite;
+import com.elfmcys.ysm.model.resource.client.AcquireResult;
+import com.elfmcys.ysm.model.resource.client.ModelRenderTarget;
+import com.elfmcys.ysm.model.resource.client.ProjectileModelResources;
+import com.elfmcys.ysm.model.resource.client.ResourceLease;
+import com.elfmcys.ysm.model.service.ClientModelService;
+import com.elfmcys.ysm.proto.mixel.manifest.asset.RenderTargetKind;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.projectile.Projectile;
 import org.jetbrains.annotations.NotNull;
@@ -28,16 +26,13 @@ public class CustomProjectileEntity extends CustomEntity<Projectile> {
         var hash = getModelHash();
         return hash == null ? null : ClientModelService.instance()
                 .findRenderTarget(hash,
-                        RenderTargetOuterClass.RenderTargetKind.RENDER_TARGET_KIND_PROJECTILE,
+                        RenderTargetKind.RENDER_TARGET_KIND_PROJECTILE,
                         entity.getType().builtInRegistryHolder().key().location()).orElse(null);
     }
 
     @Override
     protected String fallbackRenderTargetId() {
-        return ClientModelService.instance()
-                .findDefaultRenderTarget(
-                        RenderTargetOuterClass.RenderTargetKind.RENDER_TARGET_KIND_PROJECTILE,
-                        entity.getType().builtInRegistryHolder().key().location()).orElse(null);
+        return null;
     }
 
     @Override
@@ -49,12 +44,15 @@ public class CustomProjectileEntity extends CustomEntity<Projectile> {
 
     @Override
     @SuppressWarnings("deprecation")
-    protected @Nullable ResourceHolder createResourceHolder(ModelRenderTargetLease lease, boolean isFallback) {
-        var model = lease.renderTarget();
+    protected @Nullable ResourceHolder createResourceHolder(ResourceLease lease, boolean isFallback) {
+        if (!(lease.poll() instanceof AcquireResult.Ready ready)) {
+            return null;
+        }
+        var model = ready.target();
         if (!isFallback) {
             var projectileResources = model.projectileResources();
             if (projectileResources != null) {
-                return new ProjectileResourceHolder(lease, false, projectileResources);
+                return new ResourceHolder(lease, false);
             }
         }
         return null;
@@ -84,7 +82,7 @@ public class CustomProjectileEntity extends CustomEntity<Projectile> {
     @Override
     @NotNull
     public ResourceLocation getTextureLocation() {
-        return ((ProjectileResourceHolder) this.getResourceHolder()).textureHolder.id().orElseGet(MissingTextureAtlasSprite::getLocation);
+        return getModelRenderTarget().textureId();
     }
 
     @Override
@@ -112,17 +110,4 @@ public class CustomProjectileEntity extends CustomEntity<Projectile> {
         return 0.7F;
     }
 
-    private static class ProjectileResourceHolder extends ResourceHolder {
-        private final TextureHolder textureHolder;
-
-        protected ProjectileResourceHolder(ModelRenderTargetLease lease, boolean fallback, ProjectileModelResources projectileResources) {
-            super(lease, fallback);
-            textureHolder = CustomTextureManager.register(projectileResources.texture(), true);
-        }
-
-        @Override
-        public boolean isLoaded() {
-            return textureHolder.id().isPresent();
-        }
-    }
 }

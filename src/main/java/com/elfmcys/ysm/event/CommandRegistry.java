@@ -2,9 +2,9 @@ package com.elfmcys.ysm.event;
 
 import com.elfmcys.ysm.YesSteveModel;
 import com.elfmcys.ysm.client.command.ClientRootCommand;
-import com.elfmcys.ysm.client.model.ClientModelService;
+import com.elfmcys.ysm.model.service.ClientModelService;
 import com.elfmcys.ysm.command.RootCommand;
-import com.elfmcys.ysm.model.server.ServerModelService;
+import com.elfmcys.ysm.model.service.ServerModelService;
 import com.google.common.collect.Sets;
 import com.mojang.brigadier.StringReader;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
@@ -28,7 +28,7 @@ import java.util.stream.Collectors;
 public final class CommandRegistry {
     public static final SuggestionProvider<CommandSourceStack> ALL_MODELS = SuggestionProviders.register(new ResourceLocation(YesSteveModel.MOD_ID, "models"), (source, builder) -> {
         if (source.getSource() instanceof SharedSuggestionProvider) {
-            var paths = ServerModelService.current().flatMap(ServerModelService::snapshot)
+            var paths = ServerModelService.current().flatMap(ServerModelService::catalog)
                     .map(snapshot -> snapshot.models().values().stream()
                             .map(handle -> handle.location().path().value()).distinct()
                             .map(CommandRegistry::filterSuggestionStr).toList()).orElse(List.of());
@@ -58,10 +58,10 @@ public final class CommandRegistry {
     public static final SuggestionProvider<CommandSourceStack> ALL_TEXTURES = SuggestionProviders.register(new ResourceLocation(YesSteveModel.MOD_ID, "textures"), (source, builder) -> {
         if (source.getSource() instanceof SharedSuggestionProvider) {
             String modelPath = source.getArgument("model_path", String.class);
-            var model = ServerModelService.current().flatMap(ServerModelService::snapshot)
+            var model = ServerModelService.current().flatMap(ServerModelService::catalog)
                     .flatMap(snapshot -> snapshot.findPath(modelPath));
             if (model.isPresent()) {
-                List<String> textures = model.get().descriptor().view().getPlayer().getTextureNames().stream()
+                List<String> textures = model.get().representation().view().getPlayer().getTextureNames().stream()
                         .sorted()
                         .map(CommandRegistry::filterSuggestionStr).collect(Collectors.toList());
                 textures.add(0, "-");

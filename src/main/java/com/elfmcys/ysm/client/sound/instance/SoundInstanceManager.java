@@ -58,13 +58,20 @@ public class SoundInstanceManager {
                     return oldInstance;
                 });
                 if (newInstance != instance) {
+                    instance.setStopped();
                     return false;
                 }
             }
         } else {
             unnamedInstanceList.add(instance);
         }
-        Minecraft.getInstance().execute(() -> Minecraft.getInstance().getSoundManager().play(instance));
+        Minecraft.getInstance().execute(() -> {
+            var sounds = Minecraft.getInstance().getSoundManager();
+            sounds.play(instance);
+            if (!sounds.isActive(instance)) {
+                instance.setStopped();
+            }
+        });
         return true;
     }
 

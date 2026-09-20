@@ -18,13 +18,14 @@ public final class FileImageSource implements ImageSource {
     private final Hash256 expectedHash;
     private final String expectedEncoding;
 
-    public FileImageSource(Path file, int expectedSize, byte[] expectedHash, String expectedEncoding) {
+    public FileImageSource(Path file, int expectedSize, Hash256 expectedHash,
+                           String expectedEncoding) {
         this.file = Objects.requireNonNull(file, "file").toAbsolutePath().normalize();
         if (expectedSize < 0) {
             throw new IllegalArgumentException("Expected image size cannot be negative");
         }
         this.expectedSize = expectedSize;
-        this.expectedHash = new Hash256(expectedHash);
+        this.expectedHash = Objects.requireNonNull(expectedHash, "expectedHash");
         this.expectedEncoding = Objects.requireNonNull(expectedEncoding, "expectedEncoding");
     }
 

@@ -26,13 +26,13 @@ class MinecraftStateHandlerTest {
         var projectileMessage = MinecraftStateHandler.projectile(7, projectile);
         var vehicleMessage = MinecraftStateHandler.vehicle(9, vehicle);
 
-        assertEquals(7, projectileMessage.getEntity().getEntityId());
-        assertEquals(9, vehicleMessage.getEntity().getEntityId());
-        assertTrue(!projectileMessage.getEntity().hasPlayerId());
-        assertTrue(!vehicleMessage.getEntity().hasPlayerId());
-        assertTrue(ProtoBytes.equals(hash, projectileMessage.getModel().getModelHash()));
-        assertTrue(ProtoBytes.equals(hash, vehicleMessage.getModel().getModelHash()));
-        assertEquals("query.test", projectileMessage.getMolangVariables().get(0).getName());
-        assertEquals(1.5F, vehicleMessage.getMolangVariables().get(0).getValue());
+        assertEquals(7, projectileMessage.entity().entityId());
+        assertEquals(9, vehicleMessage.entity().entityId());
+        assertTrue(!projectileMessage.entity().hasPlayerId());
+        assertTrue(!vehicleMessage.entity().hasPlayerId());
+        assertTrue(ProtoBytes.equals(hash, projectileMessage.model().modelHash()));
+        assertTrue(ProtoBytes.equals(hash, vehicleMessage.model().modelHash()));
+        assertEquals("query.test", projectileMessage.molangVariables().get(0).name());
+        assertEquals(1.5F, vehicleMessage.molangVariables().get(0).value_());
     }
 }

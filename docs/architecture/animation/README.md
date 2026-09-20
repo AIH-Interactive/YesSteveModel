@@ -1,52 +1,54 @@
 # 动画架构
 
-本主题描述当前客户端动画运行时的逻辑结构。顶层目标见[动画系统](../../concepts/animation.md)；动画与 controller 的公开数据由 [Model Schema](../../standards/model-schema/assets-and-validation.md) 定义。解析结果、controller 状态、Molang 内存和 `BoneAttribute` 都是进程内状态。
+> **适用问题**：实体动画状态、controller、Molang 解释器、输入同步与 `BoneAttribute` 输出；**不包含**：服务端骨骼计算、模型分发和 native 顶点生成。
+
+本主题描述当前客户端动画运行时。顶层目标见[动画系统](../../concepts/animation.md)；模型内的 Molang 源字段由 [Model Schema](../../standards/model-schema/assets-and-validation.md) 定义，网络 action/event 由[当前网络协议](../../standards/protocol-v1/README.md#expression-action-与本地求值)定义。模型级只读 Molang 资源、实体实例、controller 状态和骨骼输出属于不同生命周期，不能因它们共同服务一次 draw 而合并 owner。
 
 ## 责任边界
 
-| 参与方 | 当前职责 | 不拥有 |
-|---|---|---|
-| 模型运行资源 | 保存已解析的 animation、controller、用户函数和骨骼绑定；随 render target 生命周期共享 | 任一 `entity` 的播放进度或变量内存 |
-| 分散的输入与兼容适配 | 投影 `Entity`、`level`、`Minecraft`、`RenderContext` 和可选模组状态 | controller 状态机和 renderer 资源 |
-| `AnimatableEntity` | 每客户端 `Entity` 的动画生命周期根；持有当前 `AnimatedGeoModel`、controller、processor、Molang/物理状态和输出槽 | 共享模型资源与 native 几何所有权 |
-| `EntityModelBinding` | 持有 render-target 资源，协调异步取得、fallback 与资源替换 | 动画求值与共享资源内部布局 |
-| `IAnimationController` | 由 coded、Bedrock 或 hybrid 实现选择状态与 animation，推进 player、转换和混合 | 跨 controller 的最终骨骼合成 |
-| `AnimationProcessor` | 调度 controller，合并通道，处理复位并提交 `BoneAttribute` | 层级矩阵、面剔除与顶点生成 |
-| Molang Parser / Evaluator | 解析表达式，管理作用域，并在求值阶段产生数值、状态动作或受控副作用 | 外部授权与资源所有权 |
-| native renderer | 通过 `ModelState::Extract` 形成层级状态与 locator，再由 `renderer::Render` 输出顶点 | animation、controller、Molang 与 Roaming 语义 |
+模型加载把容器中的 Molang 源解析成 AST，随 render target 发布为共享只读资源；`AnimatableEntity` 持有变量存储、controller 与骨骼可变状态，每帧用一个 `ExpressionEvaluator` 遍历这些 AST。服务端只裁决网络状态和 action 主体，客户端 Java 求值，native 消费骨骼输出。解析、binding、事件与 failure 规则统一见[Molang runtime](molang-runtime.md)。
 
 ## 数据流
 
 ```mermaid
 flowchart TB
-    MR["model-scoped immutable resources"] --> AE["AnimatableEntity"]
-    IN["Entity / level / client / RenderContext"] --> AE
-    AE --> CT["IAnimationController instances"]
-    CT <--> ML["Molang runtime"]
+    SRC["raw / legacy source"] --> FE["加载期 Molang 解析"]
+    FE --> AST["IValue / AST 随 render target 发布"]
+    AST --> ER["entity 自己的变量存储与 controller 时间线"]
+    IN["Entity / level / client / server / RenderContext"] --> CTX["每帧一个 MolangContext"]
+    ER --> CTX
+    CTX --> CT["controller / animation / 事件求值"]
     CT --> AP["AnimationProcessor"]
-    AP --> BA["entity-owned BoneAttribute array"]
-    ML --> FX["controlled local effects"]
+    CTX --> FX["allowEmitting 为真时立即生效的粒子、音效、roaming 写"]
+    AP --> BA["entity-owned BoneAttribute"]
     BA --> EX["ModelState::Extract"]
-    EX --> FS["GeoModelState / ModelState"]
-    FS --> RD["renderer::Render"]
+    EX --> RD["renderer::Render"]
 ```
 
-模型级资源可以被多个 `entity` 借用；controller 进度、Molang 变量、随机、物理状态和 `BoneAttribute` 数组均按 `entity` 隔离。`RenderContext` 不拥有另一套 controller 状态机：兼容 pass 可以复用 canonical `GeoModelState`，需要不同动画语义时则重新求值并 Extract 到另一输出槽。
+Target 资源可跨 entity 共享；instance、播放进度和 `BoneAttribute` 按 entity 隔离。Generation 切换见[实体与帧状态](entity-and-frame-state.md)，context 复用见[帧执行](../rendering/frame-execution.md)，失败规则见[Molang runtime](molang-runtime.md#失败与信任边界)。
 
-## 核心不变量
-
-- 动画求值发生在 Java；native 只消费已完成的骨骼结果，不回读 `Entity` 或执行脚本。
-- 每个 `entity` 的动画更新、模型切换和释放必须串行；共享模型资源由显式 owner 保活。
-- 短键和脚本变量只用于动画求值，不能承担模型身份、授权或资源命中语义。
-- 外部输入必须先归一为有界快照，不能把可变对象直接交给异步求值。
-- 可复用 pose 与本次 draw metadata 必须独立刷新。
-
-当前实现尚未完全满足统一输入快照、副作用提交和 `RenderContext` 隔离等边界，见[动画已知问题](../../status/known-issues/animation.md)。
+当前实现与验证覆盖统一见[动画已知问题](../../status/known-issues/animation.md)。
 
 ## 子主题
 
-- [`AnimatableEntity` 与帧状态](entity-and-frame-state.md)：所有权、生命周期、时间、`RenderContext` 与并发。
-- [Controller 与播放](controllers-and-playback.md)：coded、Bedrock、hybrid、状态机、混合与覆盖顺序。
+- [动画决策理由](design-rationale.md)：派生动画 chunk、完整发布与解析/执行结构分离的复杂度取舍。
+- [`AnimatableEntity` 与帧状态](entity-and-frame-state.md)：entity ownership、generation、时间、`RenderContext` 与并发。
+- [Controller 与播放](controllers-and-playback.md)：coded、Bedrock、hybrid、状态机、override 与动作提交。
 - [Processor 与骨骼输出](processor-and-bone-output.md)：通道合成、复位、`BoneAttribute` 和 native 交接。
-- [Molang 运行时](molang-runtime.md)：解析、作用域、求值阶段和副作用边界。
+- [Molang 运行时](molang-runtime.md)：源解析、binding、事件分发、roaming 与 failure。
+- [状态输入与同步](state-inputs-and-sync.md)：输入权威、PlayerState、Roaming、config action 与 `ysm.sync`。
 - [模组动画联动](../../future/mod-animation-integration.md)：尚未收敛的适配边界与验收条件。
+
+## 定位与交接
+
+`com.elfmcys.ysm.molang` 承载 lexer、parser、AST 与 `ExpressionEvaluator`；`com.elfmcys.ysm.geckolib3.core.molang` 承载 controller/query binding、变量存储与原版 query 变量；`com.elfmcys.ysm.client.animation.molang` 承载 YSM 自有 binding、函数、roaming struct 与事件包装；`com.elfmcys.ysm.geckolib3` 承载 controller、processor、动画/物理状态和输出；`client.controller` 与 `client.compat` 提供 coded controller 和可选模组输入。
+
+| 问题 | 先定位的设计对象 |
+|---|---|
+| Molang 源没被解析、解析后退化为常量或模型加载失败 | `CustomMolangParser`、`MolangParser`、`AnimationProtoMapper`、`ModelRenderTargetLoader` |
+| 换模后变量、defer 或效果进入错误状态 | `EntityModelBinding`、`AnimatableEntity`、`AnimationProcessor`、`AnimationContext` |
+| Minecraft query、可选模组输入或效果路由错误 | `PrimaryBinding`、`QueryBinding`、`YSMBinding`、`CtrlBinding` |
+| Animation 选择、转换或混合 | `IAnimationController`、`AnimationPlayer`、`AnimationProcessor` |
+| Java 输出正确但姿态或 locator 错误 | `BoneAttribute`、`GeoModelState`、`ModelState::Extract` |
+
+把容器源解析成正式 AST 属于模型加载与[资产转换](../asset-pipeline/conversion-and-export.md)；render target 的发布与 Ready 见[模型管理](../model-management/README.md)。Forge/第三方接入窗口见[游戏与扩展接入](../integration/README.md)，动画 worker 与 render thread 的交接见[运行模型](../runtime-model.md)。

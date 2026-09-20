@@ -7,6 +7,7 @@ import com.elfmcys.ysm.client.command.sub.DebugCommand;
 import com.elfmcys.ysm.client.command.sub.MolangCommand;
 import com.elfmcys.ysm.client.command.sub.SimpleWatchCommand;
 import com.elfmcys.ysm.client.entity.CustomEntity;
+import com.elfmcys.ysm.client.entity.CustomPlayerEntity;
 import com.elfmcys.ysm.client.entity.IRoamingEntity;
 import com.elfmcys.ysm.client.gui.overlay.DebugAnimationScreen;
 import com.elfmcys.ysm.geckolib3.core.controller.IAnimationController;

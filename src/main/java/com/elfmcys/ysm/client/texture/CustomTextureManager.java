@@ -10,159 +10,157 @@ import org.apache.commons.lang3.time.StopWatch;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.IdentityHashMap;
-import java.util.List;
-import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
-public class CustomTextureManager {
-    private final static int MAX_MILLI = 20;
-    private static long COUNTER = 0;
+public final class CustomTextureManager {
+    private static final int DEFAULT_REMOVAL_DELAY_TICKS = 10 * 20;
+    private static final Registry REGISTRY = new Registry(new MinecraftHost());
 
-    private final static IdentityHashMap<AbstractTexture, TextureRegistration> REGISTRATIONS = new IdentityHashMap<>();
-    private final static Queue<RegistrationEvent> PENDING_REGISTRATIONS = new ArrayDeque<>();
-    private final static Queue<CleanupEvent> CLEANUP_EVENTS = new ConcurrentLinkedQueue<>();
-    private final static Queue<RemovalEvent> PENDING_REMOVALS = new ArrayDeque<>();
-
-    public static TextureHolder register(AbstractTexture texture, boolean immediately) {
-        return register(texture, immediately, 10 * 20);
+    private CustomTextureManager() {
     }
 
-    public static TextureHolder register(AbstractTexture texture, boolean immediately, int removingDelayTicks) {
+    public static TextureHolder register(AbstractTexture texture) {
+        return register(texture, DEFAULT_REMOVAL_DELAY_TICKS);
+    }
+
+    public static TextureHolder register(AbstractTexture texture, int removingDelayTicks) {
         RenderSystem.assertOnRenderThread();
-
-        var registration = REGISTRATIONS.get(texture);
-        if (registration == null) {
-            registration = new TextureRegistration(new TextureRegistrationState<>(nextId()));
-            REGISTRATIONS.put(texture, registration);
-        } else {
-            var current = registration.holder();
-            if (current != null && registration.state.isActive(current.token)) {
-                if (immediately && !current.ready) {
-                    doRegister(texture, registration, current);
-                }
-                return current;
-            }
-        }
-
-        var activation = registration.state.activate(removingDelayTicks);
-        var holder = new TextureHolderImpl(registration.state.id(), activation.token(), activation.ready());
-        registration.holder(holder);
-        CleanerUtil.ref(holder, new CleanupEvent(texture, activation.token()), CLEANUP_EVENTS::add);
-
-        if (texture instanceof PBRTextureSet pbrTextureSet) {
-            for (var pbr : pbrTextureSet.getPBRTextures().values()) {
-                if (holder.pbr == null) {
-                    holder.pbr = new ArrayList<>(2);
-                }
-                holder.pbr.add(register(pbr, immediately, removingDelayTicks));
-            }
-        }
-        if (!holder.ready) {
-            if (immediately) {
-                doRegister(texture, registration, holder);
-            } else {
-                PENDING_REGISTRATIONS.add(new RegistrationEvent(texture, activation.token()));
-            }
-        }
-        return holder;
+        return REGISTRY.register(texture, removingDelayTicks);
     }
 
     public static void release(AbstractTexture texture) {
         RenderSystem.assertOnRenderThread();
-        var registration = REGISTRATIONS.get(texture);
-        if (registration == null) {
-            return;
-        }
-        registration.clearHolder();
-        discardIfUnregistered(texture, registration, registration.state.releaseCurrent());
+        REGISTRY.release(texture);
     }
 
     public static void tick() {
         RenderSystem.assertOnRenderThread();
+        REGISTRY.tick();
+    }
 
-        CleanupEvent cleanup;
-        while ((cleanup = CLEANUP_EVENTS.poll()) != null) {
-            var registration = REGISTRATIONS.get(cleanup.texture());
-            if (registration != null) {
-                discardIfUnregistered(cleanup.texture(), registration,
-                        registration.state.release(cleanup.token()));
-            }
+    static final class Registry {
+        private static final int MAX_MILLI = 20;
+
+        private final Host host;
+        private final IdentityHashMap<AbstractTexture, TextureRegistration> registrations =
+                new IdentityHashMap<>();
+        private final Queue<CleanupEvent> cleanupEvents = new ConcurrentLinkedQueue<>();
+        private final Queue<RemovalEvent> pendingRemovals = new ArrayDeque<>();
+        private long counter;
+
+        Registry(Host host) {
+            this.host = host;
         }
 
-        for (var entry : REGISTRATIONS.entrySet()) {
-            entry.getValue().state.tickRemoval().ifPresent(token ->
-                    PENDING_REMOVALS.add(new RemovalEvent(entry.getKey(), token)));
-        }
-
-        StopWatch stopWatch = StopWatch.createStarted();
-        while (true) {
-            var pending = PENDING_REGISTRATIONS.poll();
-            if (pending == null) {
-                break;
-            }
-            var registration = REGISTRATIONS.get(pending.texture());
-            if (registration != null && registration.state.needsRegistration(pending.token())) {
-                var holder = registration.holder();
-                if (holder == null || holder.token != pending.token()) {
-                    discardIfUnregistered(pending.texture(), registration,
-                            registration.state.release(pending.token()));
-                } else {
-                    doRegister(pending.texture(), registration, holder);
+        TextureHolder register(AbstractTexture texture, int removingDelayTicks) {
+            var registration = registrations.get(texture);
+            if (registration == null) {
+                registration = new TextureRegistration(
+                        new TextureRegistrationState<>(nextId()));
+                registrations.put(texture, registration);
+            } else {
+                var current = registration.holder();
+                if (current != null && registration.state.isActive(current.token)) {
+                    return current;
                 }
             }
-            if (stopWatch.getTime() >= MAX_MILLI) {
-                return;
-            }
-        }
 
-        var manager = Minecraft.getInstance().getTextureManager();
-        while (true) {
-            var removal = PENDING_REMOVALS.poll();
-            if (removal == null) {
-                break;
-            }
-            var registration = REGISTRATIONS.get(removal.texture());
-            if (registration != null && registration.state.shouldRelease(removal.token())) {
-                manager.release(registration.state.id());
-                if (registration.state.markReleased(removal.token())) {
-                    REGISTRATIONS.remove(removal.texture());
+            var activation = registration.state.activate(removingDelayTicks);
+            if (!activation.registered()) {
+                try {
+                    host.register(registration.state.id(), texture);
+                } catch (RuntimeException | Error failure) {
+                    discardIfUnregistered(texture, registration,
+                            registration.state.release(activation.token()));
+                    throw failure;
+                }
+                if (!registration.state.markRegistered(activation.token())) {
+                    throw new IllegalStateException("Standalone texture registration lost ownership");
                 }
             }
-            if (stopWatch.getTime() >= MAX_MILLI) {
+
+            var holder = new TextureHolderImpl(registration.state.id(), activation.token());
+            registration.holder(holder);
+            CleanerUtil.ref(holder, new CleanupEvent(texture, activation.token()), cleanupEvents::add);
+            return holder;
+        }
+
+        void release(AbstractTexture texture) {
+            var registration = registrations.get(texture);
+            if (registration == null) {
                 return;
             }
+            registration.clearHolder();
+            discardIfUnregistered(texture, registration, registration.state.releaseCurrent());
+        }
+
+        void tick() {
+            CleanupEvent cleanup;
+            while ((cleanup = cleanupEvents.poll()) != null) {
+                var registration = registrations.get(cleanup.texture());
+                if (registration != null) {
+                    discardIfUnregistered(cleanup.texture(), registration,
+                            registration.state.release(cleanup.token()));
+                }
+            }
+
+            for (var entry : registrations.entrySet()) {
+                entry.getValue().state.tickRemoval().ifPresent(token ->
+                        pendingRemovals.add(new RemovalEvent(entry.getKey(), token)));
+            }
+
+            var stopWatch = StopWatch.createStarted();
+            while (true) {
+                var removal = pendingRemovals.poll();
+                if (removal == null) {
+                    return;
+                }
+                var registration = registrations.get(removal.texture());
+                if (registration != null && registration.state.shouldRelease(removal.token())) {
+                    host.release(registration.state.id());
+                    if (registration.state.markReleased(removal.token())) {
+                        registrations.remove(removal.texture());
+                    }
+                }
+                if (stopWatch.getTime() >= MAX_MILLI) {
+                    return;
+                }
+            }
+        }
+
+        private void discardIfUnregistered(AbstractTexture texture,
+                                             TextureRegistration registration,
+                                             TextureRegistrationState.ReleaseResult result) {
+            if (result == TextureRegistrationState.ReleaseResult.DISCARD
+                    && registrations.get(texture) == registration) {
+                registrations.remove(texture);
+            }
+        }
+
+        @SuppressWarnings("removal")
+        private ResourceLocation nextId() {
+            return new ResourceLocation(YesSteveModel.MOD_ID, "textures/" + ++counter);
         }
     }
 
-    private static void doRegister(AbstractTexture texture, TextureRegistration registration,
-                                   TextureHolderImpl holder) {
-        if (registration.state.isReady(holder.token)) {
-            holder.setReady();
-            return;
-        }
-        if (!registration.state.needsRegistration(holder.token)) {
-            return;
-        }
-        Minecraft.getInstance().getTextureManager().register(registration.state.id(), texture);
-        if (registration.state.markRegistered(holder.token)) {
-            holder.setReady();
-        }
+    interface Host {
+        void register(ResourceLocation id, AbstractTexture texture);
+
+        void release(ResourceLocation id);
     }
 
-    private static void discardIfUnregistered(AbstractTexture texture, TextureRegistration registration,
-                                               TextureRegistrationState.ReleaseResult result) {
-        if (result == TextureRegistrationState.ReleaseResult.DISCARD
-                && REGISTRATIONS.get(texture) == registration) {
-            REGISTRATIONS.remove(texture);
+    private static final class MinecraftHost implements Host {
+        @Override
+        public void register(ResourceLocation id, AbstractTexture texture) {
+            Minecraft.getInstance().getTextureManager().register(id, texture);
         }
-    }
 
-    @SuppressWarnings("removal")
-    private static ResourceLocation nextId() {
-        return new ResourceLocation(YesSteveModel.MOD_ID, "textures/" + ++COUNTER);
+        @Override
+        public void release(ResourceLocation id) {
+            Minecraft.getInstance().getTextureManager().release(id);
+        }
     }
 
     private static final class TextureRegistration {
@@ -186,34 +184,14 @@ public class CustomTextureManager {
         }
     }
 
-    private record RegistrationEvent(AbstractTexture texture, TextureRegistrationState.Token token) {
-    }
-
     private record CleanupEvent(AbstractTexture texture, TextureRegistrationState.Token token) {
     }
 
     private record RemovalEvent(AbstractTexture texture, TextureRegistrationState.Token token) {
     }
 
-    private static class TextureHolderImpl implements TextureHolder {
-        private final ResourceLocation id;
-        private final TextureRegistrationState.Token token;
-        private List<TextureHolder> pbr;
-        private volatile boolean ready;
-
-        private TextureHolderImpl(ResourceLocation id, TextureRegistrationState.Token token, boolean ready) {
-            this.id = id;
-            this.token = token;
-            this.ready = ready;
-        }
-
-        @Override
-        public Optional<ResourceLocation> id() {
-            return ready ? Optional.of(id) : Optional.empty();
-        }
-
-        private void setReady() {
-            ready = true;
-        }
+    private record TextureHolderImpl(ResourceLocation id,
+                                     TextureRegistrationState.Token token)
+            implements TextureHolder {
     }
 }

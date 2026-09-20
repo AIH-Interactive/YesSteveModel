@@ -1,6 +1,6 @@
 package com.elfmcys.ysm.client.gui;
 
-import com.elfmcys.ysm.model.catalog.ModelCatalogSources;
+import com.elfmcys.ysm.model.catalog.source.ModelCatalogSources;
 import net.minecraft.Util;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;

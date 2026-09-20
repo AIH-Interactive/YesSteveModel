@@ -26,6 +26,8 @@ import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 
 public final class NativeLibUtil {
     /**
@@ -146,16 +148,50 @@ public final class NativeLibUtil {
      * 加载 Native 库文件
      */
     private static boolean loadLibrary(String libPath) {
-        YesSteveModel.LOGGER.error("Loading native lib: {}", libPath);
+        YesSteveModel.LOGGER.info("Loading native lib: {}", libPath);
+        Throwable failure;
         try {
-            System.load(libPath);
-            NativeRuntime.initialize(NativeRuntime.JavaConfig.fromLog4j(YesSteveModel.LOGGER.getLevel()));
-            return true;
+            failure = loadLibraryOnLifetimeThread(libPath);
         } catch (Throwable e) {
-            YesSteveModel.LOGGER.error("Failed to load native lib", e);
-            setUnsatisfiedRuntimeEnvironmentMsg(e.getMessage());
-            return false;
+            return failLibraryLoad(e);
         }
+        if (failure != null) {
+            return failLibraryLoad(failure);
+        }
+        return true;
+    }
+
+    @Nullable
+    private static Throwable loadLibraryOnLifetimeThread(String libPath) {
+        var initialized = new CompletableFuture<Throwable>();
+        var lifetime = new CountDownLatch(1);
+        var thread = new Thread(() -> {
+            try {
+                System.load(libPath);
+                NativeRuntime.initialize(NativeRuntime.JavaConfig.fromLog4j(YesSteveModel.LOGGER.getLevel()));
+            } catch (Throwable failure) {
+                initialized.complete(failure);
+                return;
+            }
+            initialized.complete(null);
+            // make mimalloc happy ＾－＾
+            while (true) {
+                try {
+                    lifetime.await();
+                    return;
+                } catch (InterruptedException ignored) {
+                }
+            }
+        }, "YSM Native Holder");
+        thread.setDaemon(true);
+        thread.start();
+        return initialized.join();
+    }
+
+    private static boolean failLibraryLoad(Throwable failure) {
+        YesSteveModel.LOGGER.error("Failed to load native lib", failure);
+        setUnsatisfiedRuntimeEnvironmentMsg(failure.getMessage());
+        return false;
     }
 
     /**

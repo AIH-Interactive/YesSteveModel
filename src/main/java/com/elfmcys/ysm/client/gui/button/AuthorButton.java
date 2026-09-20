@@ -1,9 +1,10 @@
 package com.elfmcys.ysm.client.gui.button;
 
 import com.elfmcys.ysm.client.lang.LanguageManager;
-import com.elfmcys.ysm.client.model.ModelRenderTarget;
-import com.elfmcys.ysm.info.ModelAuthor;
+import com.elfmcys.ysm.model.resource.client.ModelRenderTarget;
+import com.elfmcys.ysm.proto.mixel.manifest.info.Author;
 import com.google.common.collect.Lists;
+import java.util.List;
 import net.minecraft.ChatFormatting;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
@@ -18,10 +19,8 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.FormattedCharSequence;
 
-import java.util.List;
-
 public class AuthorButton extends Button {
-    private final ModelAuthor author;
+    private final Author author;
     private final ModelRenderTarget model;
     private ResourceLocation avatar;
     private final int index;
@@ -29,7 +28,8 @@ public class AuthorButton extends Button {
     private int selectedContactIndex = -1;
     private final Screen parent;
 
-    public AuthorButton(int pX, int pY, ModelAuthor author, ModelRenderTarget model, ResourceLocation avatar, int index, Screen parent) {
+    public AuthorButton(int pX, int pY, Author author, ModelRenderTarget model,
+                        ResourceLocation avatar, int index, Screen parent) {
         super(pX, pY, 70, 130, Component.empty(), b -> {
         }, DEFAULT_NARRATION);
         this.author = author;
@@ -68,7 +68,8 @@ public class AuthorButton extends Button {
 
         String authorName = LanguageManager.getI18n(model, "metadata.authors.%d.name".formatted(index), author.name());
         String authorRole = LanguageManager.getI18n(model, "metadata.authors.%d.role".formatted(index), author.role());
-        String authorComment = LanguageManager.getI18n(model, "metadata.authors.%d.comment".formatted(index), author.comment());
+        String authorComment = LanguageManager.getI18n(model, "metadata.authors.%d.comment".formatted(index),
+                author.comment().orElse(""));
 
         renderScrollingString(graphics, font, Component.literal(authorName), this.getX() + 2, this.getY() + 72, this.getX() + width - 2, this.getY() + 82, ChatFormatting.GOLD.getColor());
         graphics.drawCenteredString(font, authorRole, this.getX() + 35, this.getY() + 82, ChatFormatting.GREEN.getColor());
@@ -121,8 +122,9 @@ public class AuthorButton extends Button {
         }
 
         tooltips.clear();
-        for (int i = 0; i < author.contact().size(); i++) {
-            MutableComponent component = Component.literal(author.contact().getKeyAt(i) + ": " + author.contact().getValueAt(i));
+        for (int i = 0; i < author.contacts().size(); i++) {
+            var contact = author.contacts().get(i);
+            MutableComponent component = Component.literal(contact.key() + ": " + contact.value_());
             if (i == selectedContactIndex) {
                 component.append(Component.literal(copied ? " ✓" : " ◀").withStyle(ChatFormatting.YELLOW, ChatFormatting.BOLD));
             }
@@ -143,10 +145,10 @@ public class AuthorButton extends Button {
         if (index == -1) {
             index = 0;
         }
-        if (index < 0 || index >= author.contact().size()) {
+        if (index < 0 || index >= author.contacts().size()) {
             return;
         }
-        String value = author.contact().getValueAt(index);
+        String value = author.contacts().get(index).value_();
         if (value == null) {
             return;
         }

@@ -2,11 +2,14 @@ package com.elfmcys.ysm.client.sound.stream;
 
 import org.jetbrains.annotations.NotNull;
 
-import javax.sound.sampled.UnsupportedAudioFileException;
-import java.io.IOException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 
-@FunctionalInterface
 public interface AudioStreamProvider {
     @NotNull
-    CustomAudioStream openStream() throws IOException, UnsupportedAudioFileException;
+    CompletableFuture<CustomAudioStream> openStream(boolean looping);
+
+    void stop();
+
+    CompletionStage<Void> stopped();
 }

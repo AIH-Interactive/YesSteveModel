@@ -7,12 +7,12 @@
 | 对象 | 内容与所有权 |
 |---|---|
 | `BoneAttribute` | `AnimatedGeoModel` 的实体级求值结果；Extract 期间只临时读取，通道语义见[骨骼输出](../animation/processor-and-bone-output.md) |
-| `BonePose` 与视图 | Native `ModelState` 持有连续 `BonePose` 数组并在 Extract 时写入；成功后 Java 通过只读 `BonePoseView` 借用其中的 pose、normal 与缩放派生字段 |
-| frame state | `GeoModelState` 拥有 native `ModelState`；后者共享 `BakedModel`，并保存 `BonePose`、可见骨骼、`RenderSchedule` 与有效标记 |
-| locator result | Native 临时暂存并复制 active locator 骨骼索引；Java 结合本次 Extract 返回的 `BonePoseView` 构建 locator 映射 |
+| pose / normal buffer | Native `ModelState` 拥有 `BonePose` 容器；Extract 原位写入，Java 通过 `BonePoseView` 借用 |
+| frame state | `GeoModelState` 拥有 native `ModelState`；后者共享 `BakedModel`，并拥有 pose、可见骨骼索引、locator scratch、`RenderSchedule` 与有效标记 |
+| locator result | Native 临时暂存并复制 active locator 骨骼索引；Java 保存 locator 到骨骼索引的映射，访问时读取同一状态的借用 pose view |
 | `RenderSchedule` | 当前可见骨骼和 worker 数对应的只读计划；由 `RenderTask` 描述工作与输出范围 |
 
-`GeoModelState.extract(...)` 开始先使旧状态和借用视图失效；只有 `BoneAttribute`、locator 容量、`ModelState::Extract` 层级遍历和调度全部成功后才整体发布为有效。失败不能继续消费上一帧结果。成功的 `ModelState` 会共享持有 `BakedModel` 并拥有 `BonePose` 数组，但不保留 `BoneAttribute`；`GeoModelState` 只借用 Extract 返回的只读 `BonePoseView`。后续 Extract 可以复用或重分配 native 数组，因此旧视图只在下次 Extract 或 close 前有效；覆盖、换模或释放都必须发生在此前 Extract 与 Render 完成之后。
+`GeoModelState.extract(...)` 开始先使旧状态失效；只有 `BoneAttribute`、容量、`ModelState::Extract` 层级遍历和调度全部成功后才整体发布为有效。失败不能继续消费上一帧结果。成功的 `ModelState` 共享持有 `BakedModel`，并拥有 pose 与 render-bone 索引存储；它不保留 `BoneAttribute`。`NativeModelState` 只把返回地址包装成 Java 借用 view，不转移 allocation 所有权。View 必须在下次 Extract 或 close 前消费完毕，不能因 Java view 仍可达就继续使用旧地址。后续 Extract 可覆盖或扩容 native 存储；任何覆盖、换模或释放都必须发生在此前 Extract、Render 与 locator 消费完成之后。
 
 ```mermaid
 stateDiagram-v2
@@ -29,10 +29,12 @@ stateDiagram-v2
 
 骨骼按 `BakedModel` 的稳定 preorder 单次遍历，用可复用 pose stack 组合 parent pose、pivot、位移、ZYX rotation、scale 与反 pivot。Pivot 与 `BoneAttribute.position` 在此按模型单位转换；baked cube position 不由 Extract 统一缩放。Position 与 normal pose 分开维护；非有限属性、零 scale 或非有限结果会跳过整棵 subtree。
 
+颜色、透明度和 glow 直接从当前 bone 的 packed attribute 复制到对应 `BonePose`，不进入 pose stack，也不从 parent 继承。非法 packed 整数或 glow 字节使 Extract 失败。
+
 - 隐藏当前骨骼几何只影响该骨骼及其附着点；child 继续遍历。
 - 隐藏子级会保留当前骨骼自身，再利用 subtree range 跳过全部后代。
 - 只有未隐藏且实际拥有几何的骨骼进入 render bone 序列；正常生产路径由 preorder 构造，因此稳定且唯一。
-- 附着点供 Java 原版 layer 使用；`locator_sequence` 只标记需要回传的 active bone。`ModelState::Extract` 返回对应 bone indices 和 `BonePoseView`，`GeoModelState` 将二者组合成 locator mapping，不复制 pose records。
+- 附着点供 Java 原版 layer 使用；`locator_sequence` 只标记需要回传的 active bone。`ModelState::Extract` 返回对应 bone indices，`GeoModelState` 据此建立 locator 到骨骼索引的映射，访问时通过当前 `BonePoseView` 读取 native pose，不长期复制 pose records。
 
 ## Java 预调度与 context
 
@@ -44,7 +46,7 @@ sequenceDiagram
     participant S as GeoModelState / ModelState
 
     L->>A: scheduleAll(partialTick)
-    A->>A: 同步模型资源与 Entity 资格
+    A->>A: 同步模型 lease 与 Entity 资格
     A->>E: 预调度 canonical level RenderContext
     E->>E: animation evaluation + extract
     E->>S: 完成并发布
@@ -53,7 +55,7 @@ sequenceDiagram
     L->>A: waitAll()
 ```
 
-Java `RenderContext` 表示会影响动画、姿态或 pass 的调用环境，并决定状态是否可复用；“可复用”与“是否在 worker 执行”是两个维度：
+每次 draw 刷新矩阵、光照、相机和 context metadata，不随 pose 复用。Java `RenderContext` 表示会影响动画、姿态或 pass 的调用环境，并决定状态是否可复用；“可复用”与“是否在 worker 执行”是两个维度：
 
 | 路径 | 状态语义 | Extract 位置 |
 |---|---|---|
@@ -63,7 +65,7 @@ Java `RenderContext` 表示会影响动画、姿态或 pass 的调用环境，�
 | 本地第一人称 `irisShadow` | 强制 mutable，避免复用第三人称状态 | 渲染线程同步执行 |
 | GUI preview `Entity` | `immutable` 只表示同帧复用；当前未进入预调度集合 | 渲染线程同步执行 |
 
-同一 `entity` 启动新 worker、换模或释放前必须等待已有任务结束。Worker 完成与 render 消费通过任务完成关系和内存栅栏发布；当前不是 lock-free 双缓冲。Render 始终由 Minecraft 渲染线程发起。
+同一 entity 的所有 `RenderContext` 求值串行；各输出槽的 Extract、Render、resize 与释放也串行。启动新 worker、换模或释放前必须等待已有任务结束。Worker 完成与 render 消费通过任务完成关系和内存栅栏发布；当前不是 lock-free 双缓冲。Render 始终由 Minecraft 渲染线程发起。
 
 ## `RenderSchedule`
 

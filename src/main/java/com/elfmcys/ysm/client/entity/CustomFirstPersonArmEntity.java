@@ -2,7 +2,7 @@ package com.elfmcys.ysm.client.entity;
 
 import com.elfmcys.ysm.capability.PlayerAnimatableCapability;
 import com.elfmcys.ysm.client.animation.condition.FPArmConditionManager;
-import com.elfmcys.ysm.client.model.ModelRenderTargetLease;
+import com.elfmcys.ysm.model.resource.client.ResourceLease;
 import com.elfmcys.ysm.geckolib3.core.builder.Animation;
 import com.elfmcys.ysm.geckolib3.core.builder.controller.AnimationControllerData;
 import com.elfmcys.ysm.geckolib3.geo.render.built.GeoModel;
@@ -51,7 +51,7 @@ public class CustomFirstPersonArmEntity extends CustomEntity<LocalPlayer> {
     }
 
     @Override
-    protected @Nullable ResourceHolder createResourceHolder(ModelRenderTargetLease lease, boolean isFallback) {
+    protected @Nullable ResourceHolder createResourceHolder(ResourceLease lease, boolean isFallback) {
         return new ResourceHolder(lease, isFallback);
     }
 
@@ -77,12 +77,12 @@ public class CustomFirstPersonArmEntity extends CustomEntity<LocalPlayer> {
 
     @Override
     public float getWidthScale() {
-        return getModelRenderTarget().info().properties().widthScale();
+        return getModelRenderTarget().info().getPlayerSettings().widthScale();
     }
 
     @Override
     public float getHeightScale() {
-        return getModelRenderTarget().info().properties().heightScale();
+        return getModelRenderTarget().info().getPlayerSettings().heightScale();
     }
 
     @Override

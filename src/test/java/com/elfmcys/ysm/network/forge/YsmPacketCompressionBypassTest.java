@@ -5,13 +5,14 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.MessageToMessageEncoder;
+import java.util.Arrays;
+import java.util.List;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.network.ICustomPacket;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
-
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -24,14 +25,14 @@ class YsmPacketCompressionBypassTest {
     @Test
     void markedPacketUsesMinecraftUncompressedEnvelope() {
         var expected = new byte[512];
-        java.util.Arrays.fill(expected, (byte) 3);
+        Arrays.fill(expected, (byte) 3);
         var channel = channel(expected);
 
         channel.writeOutbound(new TestCustomPacket(YSM_CHANNEL));
         var encoded = new FriendlyByteBuf(channel.readOutbound());
         try {
             assertNotEquals(0, encoded.readableBytes());
-            org.junit.jupiter.api.Assertions.assertEquals(0, encoded.readVarInt());
+            Assertions.assertEquals(0, encoded.readVarInt());
             var actual = new byte[encoded.readableBytes()];
             encoded.readBytes(actual);
             assertArrayEquals(expected, actual);

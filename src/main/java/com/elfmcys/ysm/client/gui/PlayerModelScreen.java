@@ -6,27 +6,36 @@ import com.elfmcys.ysm.capability.PlayerAnimatableCapabilityProvider;
 import com.elfmcys.ysm.capability.StarModelsCapabilityProvider;
 import com.elfmcys.ysm.client.event.DownloadScreenInterModEvent;
 import com.elfmcys.ysm.client.gui.button.CatalogModelButton;
+import com.elfmcys.ysm.client.gui.button.FailedCatalogModelButton;
 import com.elfmcys.ysm.client.gui.button.FlatColorButton;
 import com.elfmcys.ysm.client.gui.button.FlatIconButton;
 import com.elfmcys.ysm.client.gui.button.PackButton;
 import com.elfmcys.ysm.client.gui.button.StarButton;
 import com.elfmcys.ysm.client.input.PlayerModelScreenKey;
-import com.elfmcys.ysm.client.model.ModelPackInfo;
-import com.elfmcys.ysm.client.model.ModelRenderTarget;
-import com.elfmcys.ysm.client.model.ClientAssetBatch;
-import com.elfmcys.ysm.client.model.catalog.ClientCatalogSnapshot;
-import com.elfmcys.ysm.client.model.ClientModelService;
 import com.elfmcys.ysm.config.ClientConfig;
 import com.elfmcys.ysm.config.ServerConfig;
+import com.elfmcys.ysm.model.catalog.client.ClientCatalogSnapshot;
+import com.elfmcys.ysm.model.catalog.client.ModelPackInfo;
 import com.elfmcys.ysm.model.domain.Hash256;
-import com.elfmcys.ysm.model.source.PackOffer;
+import com.elfmcys.ysm.model.domain.ModelPackDescriptor;
+import com.elfmcys.ysm.model.resource.client.ModelRenderTarget;
+import com.elfmcys.ysm.model.resource.client.asset.ClientAssetBatch;
+import com.elfmcys.ysm.model.service.ClientModelService;
+import com.elfmcys.ysm.model.session.client.ClientModelSession;
 import com.elfmcys.ysm.network.NetworkHandler;
 import com.elfmcys.ysm.network.forge.ClientProtocolGateway;
-import com.elfmcys.ysm.task.TaskScope;
+import com.elfmcys.ysm.network.forge.ClientSessionRuntime;
 import com.elfmcys.ysm.util.ModelIdUtil;
 import com.mojang.blaze3d.platform.Window;
 import com.mojang.blaze3d.systems.RenderSystem;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import net.minecraft.ChatFormatting;
+import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Checkbox;
@@ -43,13 +52,6 @@ import net.minecraftforge.fml.ModList;
 import org.apache.commons.lang3.StringUtils;
 import org.lwjgl.glfw.GLFW;
 
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-
 public class PlayerModelScreen extends Screen {
     private static final CustomGuiPlayerEntity[] MODEL_PREVIEW_ENTITY = new CustomGuiPlayerEntity[10];
 
@@ -57,9 +59,13 @@ public class PlayerModelScreen extends Screen {
     private final CatalogBrowserState browser = new CatalogBrowserState();
     private final HashSet<String> clientNotDisplayModels = new HashSet<>();
     private final List<CatalogModelButton> modelButtons = new ArrayList<>();
+    private final List<FailedCatalogModelButton> failedButtons = new ArrayList<>();
     private final List<PackButton> packButtons = new ArrayList<>();
-    private final Map<String, PackOffer> packDescriptors = new LinkedHashMap<>();
-    private TaskScope pageScope;
+    private final Map<String, ModelPackDescriptor> packDescriptors = new LinkedHashMap<>();
+    private final CatalogDemandTracker demand = new CatalogDemandTracker(Util.getMillis());
+    private ClientAssetBatch pageAssets;
+    private List<String> renderedPage = List.of();
+    private boolean pageSubmitted;
     private EditBox textField;
     protected int x;
     protected int y;
@@ -72,6 +78,7 @@ public class PlayerModelScreen extends Screen {
 
     public PlayerModelScreen() {
         super(Component.literal("YSM Player Model GUI"));
+        ClientSessionRuntime.reopenCatalog();
         if (NetworkHandler.isRemoteChannelPresent()) {
             clientNotDisplayModels.addAll(ServerConfig.CLIENT_NOT_DISPLAY_MODEL_PATHS.get());
         }
@@ -93,12 +100,15 @@ public class PlayerModelScreen extends Screen {
             return;
         }
         player.getCapability(PlayerAnimatableCapabilityProvider.CAP).ifPresent(capability -> {
-            if (NetworkHandler.isRemoteChannelPresent()) {
+            var sessionState = ClientSessionRuntime.state()
+                    .orElse(ClientModelSession.State.LOCAL);
+            if (sessionState == ClientModelSession.State.ACTIVE) {
                 if (capability.hasRoamingStorage(hash.roamingHash())) {
                     capability.updateModelAndTexture(hash, texture);
                 }
                 ClientProtocolGateway.selectModel(hash, texture);
-            } else {
+            } else if (sessionState
+                    == ClientModelSession.State.LOCAL) {
                 capability.updateModelAndTexture(hash, texture);
             }
         });
@@ -112,7 +122,7 @@ public class PlayerModelScreen extends Screen {
             rebuildCatalog(service.catalog());
         }
         calculateModelList();
-        pageScope = service.openRequestScope();
+        pageAssets = service.createAssetBatch();
 
         x = (width - 420) / 2;
         y = (height - 235) / 2;
@@ -127,9 +137,9 @@ public class PlayerModelScreen extends Screen {
 
         addHeaderButtons();
         addPageButtons();
-        var assets = service.createAssetBatch(pageScope);
-        addCatalogButtons(assets);
-        assets.submit();
+        addCatalogButtons(pageAssets);
+        renderedPage = pageSignature();
+        maybeSubmitPage(Util.getMillis());
     }
 
     private void addHeaderButtons() {
@@ -138,7 +148,7 @@ public class PlayerModelScreen extends Screen {
             if (player != null) {
                 player.getCapability(PlayerAnimatableCapabilityProvider.CAP).ifPresent(capability -> {
                     var model = capability.getModelRenderTarget();
-                    if (model != null && model.info().metadata() != null) {
+                    if (model != null && model.info().hasMetadata()) {
                         Minecraft.getInstance().setScreen(getModelInfoScreen(this, model));
                     }
                 });
@@ -190,6 +200,7 @@ public class PlayerModelScreen extends Screen {
     private void addCategoryButton(int buttonX, int u, CatalogBrowserState.Category target, String tooltip) {
         addRenderableWidget(new FlatIconButton(buttonX, y + 5, 18, 18, u, 0, ignored -> {
             if (browser.category() != target) {
+                demand.switchPage(Util.getMillis());
                 browser.category(target);
                 init();
             }
@@ -200,6 +211,7 @@ public class PlayerModelScreen extends Screen {
         addRenderableWidget(new FlatColorButton(x + 198, y + 215, 52, 14,
                 Component.translatable("gui.yes_steve_model.pre_page"), ignored -> {
             if (browser.page() > 0) {
+                demand.switchPage(Util.getMillis());
                 browser.page(browser.page() - 1);
                 init();
             }
@@ -207,6 +219,7 @@ public class PlayerModelScreen extends Screen {
         addRenderableWidget(new FlatColorButton(x + 308, y + 215, 52, 14,
                 Component.translatable("gui.yes_steve_model.next_page"), ignored -> {
             if (browser.page() < browser.maxPage()) {
+                demand.switchPage(Util.getMillis());
                 browser.page(browser.page() + 1);
                 init();
             }
@@ -219,6 +232,7 @@ public class PlayerModelScreen extends Screen {
             return;
         }
         var auth = player.getCapability(AuthModelsCapabilityProvider.AUTH_MODELS_CAP).resolve().orElse(null);
+        var sessionGrants = ClientSessionRuntime.authoritativeGrants();
         for (var slot = 0; slot < 10; slot++) {
             var index = slot + browser.page() * 10;
             var xStart = x + 143 + 55 * (slot % 5);
@@ -227,6 +241,7 @@ public class PlayerModelScreen extends Screen {
                 var pack = browser.packs().get(index);
                 var button = new PackButton(xStart, yStart, 52, 90, pack,
                         packDescriptors.get(pack.hierarchy()), assets, ignored -> {
+                    demand.switchPage(Util.getMillis());
                     browser.enterPack(pack.hierarchy());
                     init();
                 });
@@ -235,18 +250,26 @@ public class PlayerModelScreen extends Screen {
                 continue;
             }
             index -= browser.packs().size();
-            if (index < 0 || index >= browser.models().size()) {
+            if (index >= 0 && index < browser.models().size()) {
+                var entry = browser.models().get(index);
+                var needAuth = entry.authorizationRequired()
+                        && sessionGrants.map(grants -> !grants.contains(entry.modelHash()))
+                        .orElseGet(() -> auth == null || !auth.containModel(entry.modelHash()));
+                var button = new CatalogModelButton(xStart, yStart, entry, needAuth,
+                        assets, MODEL_PREVIEW_ENTITY[slot], this::selectModel,
+                        (hash, path, renderTarget) -> Minecraft.getInstance().setScreen(
+                                getTextureScreen(this, hash, renderTarget)));
+                modelButtons.add(button);
+                addRenderableWidget(button);
                 continue;
             }
-            var entry = browser.models().get(index);
-            var needAuth = entry.authorizationRequired()
-                    && (auth == null || !auth.containModel(entry.modelHash()));
-            var button = new CatalogModelButton(xStart, yStart, entry, needAuth,
-                    pageScope, assets, MODEL_PREVIEW_ENTITY[slot], this::selectModel,
-                    (hash, path, renderTarget) -> Minecraft.getInstance().setScreen(
-                            getTextureScreen(this, hash, renderTarget)));
-            modelButtons.add(button);
-            addRenderableWidget(button);
+            index -= browser.models().size();
+            if (index >= 0 && index < browser.failed().size()) {
+                var button = new FailedCatalogModelButton(
+                        xStart, yStart, browser.failed().get(index));
+                failedButtons.add(button);
+                addRenderableWidget(button);
+            }
         }
     }
 
@@ -254,29 +277,40 @@ public class PlayerModelScreen extends Screen {
         var player = minecraft == null ? null : minecraft.player;
         var auth = player == null ? null
                 : player.getCapability(AuthModelsCapabilityProvider.AUTH_MODELS_CAP).resolve().orElse(null);
+        var sessionGrants = ClientSessionRuntime.authoritativeGrants();
         var stars = player == null ? null
                 : player.getCapability(StarModelsCapabilityProvider.STAR_MODELS_CAP).resolve().orElse(null);
         browser.filter(textField == null ? "" : textField.getValue(), locale(), clientNotDisplayModels,
-                hash -> auth != null && auth.containModel(hash),
+                hash -> sessionGrants.map(grants -> grants.contains(hash))
+                        .orElseGet(() -> auth != null && auth.containModel(hash)),
                 hash -> stars != null && stars.containModel(hash));
     }
 
     private void rebuildCatalog(ClientCatalogSnapshot next) {
         packDescriptors.clear();
-        next.packs().forEach(pack -> packDescriptors.putIfAbsent(pack.subject().hierarchy(), pack));
+        next.packs().forEach(pack -> packDescriptors.putIfAbsent(pack.hierarchy(), pack));
         browser.rebuild(next, this::packInfo);
     }
 
-    private ModelPackInfo packInfo(PackOffer descriptor) {
+    private ModelPackInfo packInfo(ModelPackDescriptor descriptor) {
         var languages = new LinkedHashMap<String, Map<String, String>>();
         descriptor.translations().forEach((locale, text) -> languages.put(locale,
                 Map.of("name", text.name(), "description", text.description())));
-        return new ModelPackInfo(descriptor.subject().hierarchy(), descriptor.name(), descriptor.description(),
+        return new ModelPackInfo(descriptor.hierarchy(), descriptor.name(), descriptor.description(),
                 null, Map.copyOf(languages));
     }
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+        var nowMillis = Util.getMillis();
+        var hovered = modelButtons.stream()
+                .filter(button -> button.isMouseOver(mouseX, mouseY))
+                .map(CatalogModelButton::modelHash)
+                .findFirst().orElse(null);
+        demand.observeHover(hovered, nowMillis);
+        var hoverGeneration = demand.hoverGeneration();
+        modelButtons.forEach(button -> button.updateDemand(hoverGeneration,
+                demand.mayBake(button.modelHash(), nowMillis)));
         renderBackground(graphics);
         graphics.fillGradient(x, y, x + 135, y + 235, 0xFF222222, 0xFF222222);
         graphics.fillGradient(x + 138, y, x + 420, y + 235, 0xFF222222, 0xFF222222);
@@ -307,6 +341,7 @@ public class PlayerModelScreen extends Screen {
         renderables.stream().filter(FlatIconButton.class::isInstance).map(FlatIconButton.class::cast)
                 .forEach(button -> button.renderToolTip(graphics, this, mouseX, mouseY));
         modelButtons.forEach(button -> button.renderTooltip(graphics, this, mouseX, mouseY));
+        failedButtons.forEach(button -> button.renderTooltip(graphics, this, mouseX, mouseY));
         renderables.stream().filter(PackButton.class::isInstance).map(PackButton.class::cast)
                 .forEach(button -> button.renderComponentTooltip(graphics, this, mouseX, mouseY));
     }
@@ -343,8 +378,15 @@ public class PlayerModelScreen extends Screen {
     public void tick() {
         textField.tick();
         if (browser.catalog() != service.catalog()) {
-            init();
+            var previousPage = renderedPage;
+            rebuildCatalog(service.catalog());
+            calculateModelList();
+            if (!previousPage.equals(pageSignature())) {
+                demand.switchPage(Util.getMillis());
+                init();
+            }
         }
+        maybeSubmitPage(Util.getMillis());
     }
 
     @Override
@@ -370,6 +412,7 @@ public class PlayerModelScreen extends Screen {
         var previous = textField.getValue();
         if (textField.charTyped(codePoint, modifiers)) {
             if (!Objects.equals(previous, textField.getValue())) {
+                demand.switchPage(Util.getMillis());
                 browser.resetPage();
                 init();
             }
@@ -387,6 +430,7 @@ public class PlayerModelScreen extends Screen {
         var previous = textField.getValue();
         if (textField.keyPressed(keyCode, scanCode, modifiers)) {
             if (!Objects.equals(previous, textField.getValue())) {
+                demand.switchPage(Util.getMillis());
                 browser.resetPage();
                 init();
             }
@@ -409,9 +453,11 @@ public class PlayerModelScreen extends Screen {
     public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
         if (delta != 0 && mouseX > x + 143 && mouseX < x + 430 && mouseY > y + 25 && mouseY < y + 235) {
             if (delta > 0 && browser.page() > 0) {
+                demand.switchPage(Util.getMillis());
                 browser.page(browser.page() - 1);
                 init();
             } else if (delta < 0 && browser.page() < browser.maxPage()) {
+                demand.switchPage(Util.getMillis());
                 browser.page(browser.page() + 1);
                 init();
             }
@@ -429,6 +475,7 @@ public class PlayerModelScreen extends Screen {
 
     @Override
     public void removed() {
+        demand.close();
         closePage();
         super.removed();
     }
@@ -441,21 +488,68 @@ public class PlayerModelScreen extends Screen {
     private void closeModelButtons() {
         modelButtons.forEach(CatalogModelButton::close);
         modelButtons.clear();
+        failedButtons.clear();
     }
 
     private void closePage() {
         closeModelButtons();
         packButtons.forEach(PackButton::close);
         packButtons.clear();
-        if (pageScope != null) {
-            pageScope.close();
-            pageScope = null;
+        if (pageAssets != null) {
+            pageAssets.close();
+            pageAssets = null;
         }
+        pageSubmitted = false;
     }
 
     private void backToParent() {
+        demand.switchPage(Util.getMillis());
         browser.backToParent();
         init();
+    }
+
+    private void maybeSubmitPage(long nowMillis) {
+        if (pageAssets == null || pageSubmitted) {
+            return;
+        }
+        var hasRemoteMiss = pageAssets.hasRemoteRequests();
+        if (!demand.maySubmitPage(hasRemoteMiss, nowMillis)) {
+            return;
+        }
+        pageSubmitted = true;
+        pageAssets.submit();
+    }
+
+    private List<String> pageSignature() {
+        var result = new ArrayList<String>(10);
+        for (var slot = 0; slot < 10; slot++) {
+            var index = slot + browser.page() * 10;
+            if (index < browser.packs().size()) {
+                var pack = browser.packs().get(index);
+                var descriptor = packDescriptors.get(pack.hierarchy());
+                result.add("pack:" + pack.hierarchy() + ":" + pack.name() + ":"
+                        + pack.desc() + ":" + pack.lang() + ":"
+                        + (descriptor == null ? "synthetic" : descriptor.rootKind() + ":"
+                        + descriptor.coverSize() + ":"
+                        + Objects.hashCode(descriptor.coverHash())));
+                continue;
+            }
+            index -= browser.packs().size();
+            if (index >= 0 && index < browser.models().size()) {
+                var entry = browser.models().get(index);
+                result.add("model:" + entry.modelHash() + ":"
+                        + entry.content().representation().identity() + ":"
+                        + entry.entry() + ":" + entry.origin());
+                continue;
+            }
+            index -= browser.models().size();
+            if (index >= 0 && index < browser.failed().size()) {
+                result.add("failed:" + browser.failed().get(index));
+            } else {
+                result.add("empty");
+            }
+        }
+        return List.copyOf(result);
     }
 
     private String locale() {

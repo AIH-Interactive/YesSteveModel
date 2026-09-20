@@ -4,7 +4,7 @@ syntax = "proto3";
 package mixel.manifest.info;
 
 message Properties {
-  bytes hash_id = 1;
+  bytes model_id = 1;
   bool free = 2;
   string origin_ver = 3;
 }

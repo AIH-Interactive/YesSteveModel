@@ -1,7 +1,7 @@
 package com.elfmcys.ysm.geckolib3.model;
 
 import com.elfmcys.ysm.geckolib3.geo.render.built.GeoBone;
-import mixel.asset.model.data.GeoModelOuterClass;
+import com.elfmcys.ysm.proto.mixel.asset.model.data.Bone;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -10,10 +10,11 @@ class AnimatedGeoBoneTest {
     @Test
     void packsIndependentRenderAttributesWithIdentityDefaults() {
         var attributes = new float[AnimatedGeoModel.BONE_ATTRIBUTE_COUNT];
-        var data = GeoModelOuterClass.Bone.newInstance()
+        var data = Bone.newBuilder()
                 .setName("root")
                 .addRotate(0).addRotate(0).addRotate(0)
-                .addPivot(0).addPivot(0).addPivot(0);
+                .addPivot(0).addPivot(0).addPivot(0)
+                .build();
         var bone = new AnimatedGeoBone(new GeoBone(data, null), attributes, 0);
 
         assertEquals(0xFFFFFF, (int) attributes[12]);

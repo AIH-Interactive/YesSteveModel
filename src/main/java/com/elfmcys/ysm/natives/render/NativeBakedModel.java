@@ -8,15 +8,15 @@ import com.elfmcys.ysm.mixin.client.NativeImageAccessor;
 import com.elfmcys.ysm.natives.NativeObject;
 import com.elfmcys.ysm.natives.buffer.BufferArgument;
 import com.elfmcys.ysm.natives.buffer.NativeHeapBuffer;
-import mixel.asset.model.data.GeoModelOuterClass;
+import com.elfmcys.ysm.proto.mixel.asset.model.data.GeoModel;
 import com.elfmcys.ysm.util.ProtoUtil;
 import com.mojang.blaze3d.platform.NativeImage;
+import java.io.IOException;
+import java.lang.ref.Reference;
+import java.nio.ByteBuffer;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
-
-import java.io.IOException;
-import java.nio.ByteBuffer;
 
 public final class NativeBakedModel extends NativeObject {
     private static final int BONE_INFO_INT_COUNT = 4;
@@ -79,7 +79,12 @@ public final class NativeBakedModel extends NativeObject {
     }
 
     public Info getInfo() {
-        var data = nGetInfo(get());
+        final long data;
+        try {
+            data = nGetInfo(get());
+        } finally {
+            Reference.reachabilityFence(this);
+        }
         if (data == -1) {
             throw new RuntimeException("Failed to get BakedModel info");
         }
@@ -92,7 +97,13 @@ public final class NativeBakedModel extends NativeObject {
     public BoneInfo[] getBoneInfo(int boneIndex, int boneCount) {
         var requiredSize = checkedArraySize(boneCount, BONE_INFO_INT_COUNT);
         var data = getIntBuffer(requiredSize);
-        if (!nGetBoneInfo(get(), boneIndex, boneCount, data)) {
+        final boolean success;
+        try {
+            success = nGetBoneInfo(get(), boneIndex, boneCount, data);
+        } finally {
+            Reference.reachabilityFence(this);
+        }
+        if (!success) {
             throw new RuntimeException("Failed to get BakedModel bone info");
         }
 
@@ -112,8 +123,14 @@ public final class NativeBakedModel extends NativeObject {
                                   int cubeIndex, int cubeCount) {
         var requiredSize = checkedArraySize(cubeCount, CUBE_DATA_FLOAT_COUNT);
         var data = getFloatBuffer(requiredSize);
-        if (!nGetCubeData(get(), boneIndex, bonePartition, cubeIndex,
-                cubeCount, data)) {
+        final boolean success;
+        try {
+            success = nGetCubeData(get(), boneIndex, bonePartition, cubeIndex,
+                    cubeCount, data);
+        } finally {
+            Reference.reachabilityFence(this);
+        }
+        if (!success) {
             throw new RuntimeException("Failed to get BakedModel cube data");
         }
 
@@ -203,7 +220,7 @@ public final class NativeBakedModel extends NativeObject {
     }
 
     @Owned
-    public static BakeResult bake(GeoModelOuterClass.GeoModel model,
+    public static BakeResult bake(GeoModel model,
                                   NativeImage texture, int originVersion,
                                   boolean forceCulling, boolean forceTranslucent,
                                   boolean hasPbr) throws IOException {
@@ -223,36 +240,54 @@ public final class NativeBakedModel extends NativeObject {
             throw new IllegalArgumentException("Texture format not supported");
         }
         var accessor = (NativeImageAccessor) (Object) texture;
-        return bake(modelData, boneCount, accessor.ysm$pixels(),
+        validateTextureSize(accessor.ysm$size(), texture.getWidth(), texture.getHeight());
+        return bake(modelData, boneCount, accessor.ysm$pixels(), texture,
                 texture.getWidth(), texture.getHeight(), originVersion,
                 forceCulling, forceTranslucent, hasPbr);
     }
 
     @Owned
     public static BakeResult bake(UniBuffer modelData, int boneCount,
-                                  long texturePtr, int textureWidth,
+                                  NativeBuffer texturePixels, int textureWidth,
                                   int textureHeight, int originVersion,
                                   boolean hasPbr) {
-        return bake(modelData, boneCount, texturePtr, textureWidth,
+        return bake(modelData, boneCount, texturePixels, textureWidth,
                 textureHeight, originVersion, false, false, hasPbr);
     }
 
     @Owned
     public static BakeResult bake(UniBuffer modelData, int boneCount,
-                                  long texturePtr, int textureWidth,
+                                  NativeBuffer texturePixels, int textureWidth,
                                   int textureHeight, int originVersion,
                                   boolean forceCulling,
                                   boolean forceTranslucent, boolean hasPbr) {
+        validateTextureSize(texturePixels.size(), textureWidth, textureHeight);
+        return bake(modelData, boneCount, texturePixels.ptr(), texturePixels,
+                textureWidth, textureHeight, originVersion, forceCulling,
+                forceTranslucent, hasPbr);
+    }
+
+    private static BakeResult bake(UniBuffer modelData, int boneCount,
+                                   long texturePtr, Object textureOwner,
+                                   int textureWidth, int textureHeight,
+                                   int originVersion, boolean forceCulling,
+                                   boolean forceTranslucent, boolean hasPbr) {
         validateBoneCount(boneCount);
         if (originVersion < 0 || originVersion > 0xffff) {
             throw new IllegalArgumentException("Invalid origin version");
         }
         var sortedBoneIndices = new short[boneCount];
         var input = BufferArgument.packInput(modelData);
-        var output = nBake(input.obj(), input.flags(), sortedBoneIndices,
-                texturePtr, textureWidth, textureHeight,
-                packBakeOptions(originVersion, forceCulling, forceTranslucent,
-                        hasPbr));
+        final ByteBuffer output;
+        try {
+            output = nBake(input.obj(), input.flags(), sortedBoneIndices,
+                    texturePtr, textureWidth, textureHeight,
+                    packBakeOptions(originVersion, forceCulling, forceTranslucent,
+                            hasPbr));
+        } finally {
+            Reference.reachabilityFence(modelData);
+            Reference.reachabilityFence(textureOwner);
+        }
         if (output == null) {
             throw new RuntimeException("Failed to bake model");
         }
@@ -264,7 +299,12 @@ public final class NativeBakedModel extends NativeObject {
         validateBoneCount(boneCount);
         var sortedBoneIndices = new short[boneCount];
         var args = BufferArgument.packInput(buffer);
-        var ptr = nRead(args.obj(), args.flags(), sortedBoneIndices);
+        final long ptr;
+        try {
+            ptr = nRead(args.obj(), args.flags(), sortedBoneIndices);
+        } finally {
+            Reference.reachabilityFence(buffer);
+        }
         if (ptr == 0) {
             throw new RuntimeException("Failed to read BakedModel");
         }
@@ -278,12 +318,13 @@ public final class NativeBakedModel extends NativeObject {
             throw new IllegalArgumentException("Texture format not supported");
         }
         var accessor = (NativeImageAccessor) (Object) texture;
-        return tryBake(modelData, accessor.ysm$pixels(), texture.getWidth(),
+        validateTextureSize(accessor.ysm$size(), texture.getWidth(), texture.getHeight());
+        return tryBake(modelData, accessor.ysm$pixels(), texture, texture.getWidth(),
                 texture.getHeight(), originVersion, forceCulling,
                 forceTranslucent, hasPbr);
     }
 
-    public static boolean tryBake(GeoModelOuterClass.GeoModel model,
+    public static boolean tryBake(GeoModel model,
                                   NativeBuffer texturePixels,
                                   int textureWidth, int textureHeight,
                                   int originVersion, boolean forceCulling,
@@ -291,32 +332,58 @@ public final class NativeBakedModel extends NativeObject {
             throws IOException {
         try (var modelData = ArrayBuffer.allocateWithScope(model.getSerializedSize())) {
             model.writeTo(ProtoUtil.sink(modelData.get()));
-            return tryBake(modelData.get(), texturePixels.ptr(), textureWidth,
+            return tryBake(modelData.get(), texturePixels, textureWidth,
                     textureHeight, originVersion, forceCulling,
                     forceTranslucent, hasPbr);
         }
     }
 
-    public static boolean tryBake(UniBuffer modelData, long texturePtr,
+    public static boolean tryBake(UniBuffer modelData, NativeBuffer texturePixels,
                                   int textureWidth, int textureHeight,
                                   int originVersion, boolean forceCulling,
                                   boolean forceTranslucent, boolean hasPbr) {
+        validateTextureSize(texturePixels.size(), textureWidth, textureHeight);
+        return tryBake(modelData, texturePixels.ptr(), texturePixels,
+                textureWidth, textureHeight, originVersion, forceCulling,
+                forceTranslucent, hasPbr);
+    }
+
+    private static boolean tryBake(UniBuffer modelData, long texturePtr,
+                                   Object textureOwner, int textureWidth,
+                                   int textureHeight, int originVersion,
+                                   boolean forceCulling,
+                                   boolean forceTranslucent, boolean hasPbr) {
         if (originVersion < 0 || originVersion > 0xffff) {
             throw new IllegalArgumentException("Invalid origin version");
         }
         var input = BufferArgument.packInput(modelData);
-        return nTryBake(input.obj(), input.flags(), texturePtr, textureWidth,
-                textureHeight, packBakeOptions(originVersion, forceCulling,
-                        forceTranslucent, hasPbr));
+        try {
+            return nTryBake(input.obj(), input.flags(), texturePtr, textureWidth,
+                    textureHeight, packBakeOptions(originVersion, forceCulling,
+                            forceTranslucent, hasPbr));
+        } finally {
+            Reference.reachabilityFence(modelData);
+            Reference.reachabilityFence(textureOwner);
+        }
     }
 
-    private static int boneCount(GeoModelOuterClass.GeoModel model) {
-        return model.hasBones() ? model.getBones().length() : 0;
+    private static int boneCount(GeoModel model) {
+        return model.bones().size();
     }
 
     private static void validateBoneCount(int boneCount) {
         if (boneCount < 0 || boneCount > 0x10000) {
             throw new IllegalArgumentException("Invalid bone count");
+        }
+    }
+
+    private static void validateTextureSize(long size, int width, int height) {
+        if (width < 0 || height < 0) {
+            throw new IllegalArgumentException("Invalid texture dimensions");
+        }
+        var required = Math.multiplyExact(Math.multiplyExact((long) width, height), 4L);
+        if (size < required) {
+            throw new IllegalArgumentException("Texture buffer is too small");
         }
     }
 

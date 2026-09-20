@@ -4,10 +4,8 @@
 
 ## 视觉与接入
 
-- Java 主体渲染目前固定使用 `RenderType.entityCutoutNoCull`，没有按模型透明语义选择 translucent `RenderType`。Native 虽会排序透明面，最终混合仍可能与 Blockbench 不一致。
 - 透明排序只覆盖单次模型 draw；跨实体、跨模型和跨 draw 的次序仍由上层决定。Iris shadow 不执行透明排序。
 - PBR 效果依赖 Iris 版本、shader pack 和 companion texture 接入，不能仅凭 baked tangent 存在保证一致。
-- `VertexConsumer` fallback 当前错误解释 packed normal 的分量顺序与 SNORM 缩放，光照方向不能视为与 Vanilla / Iris direct 输出等价。
 - 当前实际接通的骨骼附着点 layer 只有右手持物；副手、头部、鞘翅、肩部和背包等仍未进入完整主链，第一人称手臂与背景入口也未迁移完成。
 
 ## 正确性与失败处理
@@ -19,12 +17,16 @@
 
 ## 并发与性能
 
-- `ParallelExecutor`、translucent scratch、`VertexConsumer` fallback 与 `NativeRenderAdapter` 的共享 matrix scratch 都不可重入，多个 `renderer::Render` 必须全局串行。同一输出槽的 Extract 会覆盖或重分配 `ModelState` 持有的 `BonePose` 并使 Java 借用视图失效，因此 Extract、Render、换模与释放仍必须串行。
+- `ParallelExecutor`、translucent scratch、`VertexConsumer` fallback 与 `NativeRenderer` 的共享 matrix scratch 都不可重入，多个 `renderer::Render` 必须全局串行。`ModelState` 原地复用自身 pose 与索引存储，Java view 只在该状态的有效期内可读，因此同一输出槽的 Extract、Render、换模与释放必须串行。
 - 调度按不可拆分 `CubeGroup` 数而非实际 quad、PBR 或剔除成本分配任务，复杂模型可能出现 worker 尾部不均衡。
 - 剔除分区按最大可见容量预留，并以零值填充未使用槽位，这是固定 offset 的当前代价。
+
+## 扩展接线
+
+`RegisterRenderStateModifierEvent` 和 `RenderStateModifier.apply()` 当前只有声明与容器代码，生产路径没有发布该注册事件或调用 modifier。`@ParallelInvoke("entity")` 注解不能作为该扩展已接通的证明；已存在的 locator、模型和 layer 事件窗口见[游戏与扩展接入](../../architecture/integration/README.md)。
 
 ## 待验证场景
 
 Native renderer 尚未形成可作为支持声明依据的自动化回归与视觉验收闭环。
 
-在声明支持前，Minecraft 运行验证至少应覆盖：`level` entity 同帧多 pass、`inventory` / `paperDoll` context 的 mutable 输出、本地第一人称 `irisShadow`、模型热切换、`VertexConsumer` fallback、透明与 PBR、非均匀缩放及各 locator layer。还应验证 locator mapping 始终引用对应 Extract 快照的 `BonePoseView`，且下次 Extract 或 close 后不会继续消费旧视图。视觉验收应比较 Vanilla、Iris 与 Blockbench 基准，并区分几何语义偏差和 shader / 光照环境差异。
+在声明支持前，Minecraft 运行验证至少应覆盖：`level` entity 同帧多 pass、`inventory` / `paperDoll` context 的 mutable 输出、本地第一人称 `irisShadow`、模型热切换、`VertexConsumer` fallback、透明与 PBR、非均匀缩放及各 locator layer。还应验证 locator mapping 始终读取对应 native `ModelState` 的当前 pose，且旧 Java view 不跨越 Extract 或 close 使用。Packed normal 的编解码约定见[顶点输出](../../architecture/rendering/vertex-output.md)，约定匹配不能替代 fallback 与 direct 的完整视觉等价验收。视觉验收应比较 Vanilla、Iris 与 Blockbench 基准，并区分几何语义偏差和 shader / 光照环境差异。

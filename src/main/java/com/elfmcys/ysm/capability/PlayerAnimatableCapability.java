@@ -3,8 +3,8 @@ package com.elfmcys.ysm.capability;
 import com.elfmcys.ysm.client.compat.FirstPersonCompat;
 import com.elfmcys.ysm.client.compat.bettercombat.BetterCombatCompat;
 import com.elfmcys.ysm.client.entity.CustomPlayerEntity;
-import com.elfmcys.ysm.client.model.ModelRenderTarget;
-import com.elfmcys.ysm.client.model.ModelRenderTargetLease;
+import com.elfmcys.ysm.model.resource.client.ModelRenderTarget;
+import com.elfmcys.ysm.model.resource.client.ResourceLease;
 import com.elfmcys.ysm.geckolib3.core.event.predicate.AnimationEvent;
 import com.elfmcys.ysm.geckolib3.model.AnimatableEntity;
 import com.elfmcys.ysm.geckolib3.model.AnimatedGeoModel;
@@ -45,7 +45,7 @@ public final class PlayerAnimatableCapability extends CustomPlayerEntity {
     @Override
     protected void onModelRenderTargetLoaded(ModelRenderTarget newModel) {
         super.onModelRenderTargetLoaded(newModel);
-        roamingSession.modelLoaded(getModelRenderTarget().info().hashShort());
+        roamingSession.modelLoaded(getModelRenderTarget().modelHash().roamingHash());
     }
 
     @Override
@@ -75,19 +75,16 @@ public final class PlayerAnimatableCapability extends CustomPlayerEntity {
         if (model != null && isLocalPlayer()) {
             var ctx = animationEvent.getRenderContext();
             if (ctx.firstPersonMod()) {
-                if (model.getFirstPersonHead() != null) {
-                    model.getFirstPersonHead().setHidden(true);
+                if (model.getFirstPersonAllHead() != null) {
+                    model.getFirstPersonAllHead().setHidden(true);
                 }
                 if (model.getFirstPersonViewLocator() != null) {
                     FirstPersonCompat.setHeadPos(model.getFirstPersonViewLocator().getPivot().y * getHeightScale());
                 } else if (update) {
-                    // TODO
-                    /*
-                    if (!model.headBones().isEmpty()) {
-                        var head = model.headBones().get(model.headBones().size() - 1);
-                        FirstPersonCompat.setHeadPos(head == null ? 24f : (head.getPivotY() * getHeightScale()));
+                    var head = model.getFirstPersonHead();
+                    if (head != null) {
+                        FirstPersonCompat.setHeadPos(head.getPivotY() * getHeightScale());
                     }
-                    */
                 }
             }
         }
@@ -99,14 +96,18 @@ public final class PlayerAnimatableCapability extends CustomPlayerEntity {
 
         AnimatedGeoModel model = getLoadedGeoModel();
         if (model != null && isLocalPlayer()) {
-            if ((FirstPersonCompat.isInstalled() || BetterCombatCompat.isInstalled()) && model.getFirstPersonHead() != null) {
-                model.getFirstPersonHead().setHidden(false);
+            if ((FirstPersonCompat.isInstalled() || BetterCombatCompat.isInstalled()) && model.getFirstPersonAllHead() != null) {
+                model.getFirstPersonAllHead().setHidden(false);
             }
         }
     }
 
     public void resetRoamingVars(int modelHashShort, Int2FloatOpenHashMap vars) {
         roamingSession.resetFromServer(modelHashShort, vars);
+    }
+
+    public void clearRoamingVars() {
+        roamingSession.clearFromServer();
     }
 
     public boolean hasRoamingStorage(int hashShort) {
@@ -125,6 +126,11 @@ public final class PlayerAnimatableCapability extends CustomPlayerEntity {
         return roamingSession.snapshot(authoritativeModelKey);
     }
 
+    /** The roaming namespace of the applied model, or null before one is loaded. */
+    public Integer localRoamingKey() {
+        return roamingSession.currentRoamingKey();
+    }
+
     public record RoamingSnapshot(int modelKey, Int2FloatOpenHashMap values) {
     }
 
@@ -136,8 +142,8 @@ public final class PlayerAnimatableCapability extends CustomPlayerEntity {
 
     @Override
     @NotNull
-    protected HumanoidResourceHolder createResourceHolder(ModelRenderTargetLease lease, boolean isFallback) {
-        return new HumanoidResourceHolder(lease, isFallback, true, true, 30 * 20);
+    protected HumanoidResourceHolder createResourceHolder(ResourceLease lease, boolean isFallback) {
+        return new HumanoidResourceHolder(lease, isFallback);
     }
 
 }

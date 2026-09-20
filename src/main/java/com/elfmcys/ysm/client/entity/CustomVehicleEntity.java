@@ -2,17 +2,15 @@ package com.elfmcys.ysm.client.entity;
 
 import com.elfmcys.ysm.client.controller.VehicleOriginController;
 import com.elfmcys.ysm.client.controller.collections.VehicleControllerCollection;
-import com.elfmcys.ysm.client.model.ModelRenderTarget;
-import com.elfmcys.ysm.client.model.VehicleModelResources;
-import com.elfmcys.ysm.client.model.ClientModelService;
-import com.elfmcys.ysm.client.model.ModelRenderTargetLease;
-import com.elfmcys.ysm.client.texture.CustomTextureManager;
-import com.elfmcys.ysm.client.texture.TextureHolder;
 import com.elfmcys.ysm.geckolib3.core.builder.Animation;
 import com.elfmcys.ysm.geckolib3.core.builder.controller.AnimationControllerData;
 import com.elfmcys.ysm.geckolib3.geo.render.built.GeoModel;
-import mixel.manifest.asset.RenderTargetOuterClass;
-import net.minecraft.client.renderer.texture.MissingTextureAtlasSprite;
+import com.elfmcys.ysm.model.resource.client.AcquireResult;
+import com.elfmcys.ysm.model.resource.client.ModelRenderTarget;
+import com.elfmcys.ysm.model.resource.client.ResourceLease;
+import com.elfmcys.ysm.model.resource.client.VehicleModelResources;
+import com.elfmcys.ysm.model.service.ClientModelService;
+import com.elfmcys.ysm.proto.mixel.manifest.asset.RenderTargetKind;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.Entity;
 import org.jetbrains.annotations.NotNull;
@@ -32,16 +30,13 @@ public class CustomVehicleEntity extends CustomEntity<Entity> {
         var hash = getModelHash();
         return hash == null ? null : ClientModelService.instance()
                 .findRenderTarget(hash,
-                        RenderTargetOuterClass.RenderTargetKind.RENDER_TARGET_KIND_VEHICLE,
+                        RenderTargetKind.RENDER_TARGET_KIND_VEHICLE,
                         entity.getType().builtInRegistryHolder().key().location()).orElse(null);
     }
 
     @Override
     protected String fallbackRenderTargetId() {
-        return ClientModelService.instance()
-                .findDefaultRenderTarget(
-                        RenderTargetOuterClass.RenderTargetKind.RENDER_TARGET_KIND_VEHICLE,
-                        entity.getType().builtInRegistryHolder().key().location()).orElse(null);
+        return null;
     }
 
     @Override
@@ -62,11 +57,14 @@ public class CustomVehicleEntity extends CustomEntity<Entity> {
 
     @Override
     @SuppressWarnings("deprecation")
-    protected @Nullable ResourceHolder createResourceHolder(ModelRenderTargetLease lease, boolean isFallback) {
-        var model = lease.renderTarget();
+    protected @Nullable ResourceHolder createResourceHolder(ResourceLease lease, boolean isFallback) {
+        if (!(lease.poll() instanceof AcquireResult.Ready ready)) {
+            return null;
+        }
+        var model = ready.target();
         var vehicleResources = model.vehicleResources();
         if (vehicleResources != null) {
-            return new VehicleResourceHolder(lease, isFallback, vehicleResources);
+            return new ResourceHolder(lease, isFallback);
         }
         return null;
     }
@@ -96,7 +94,7 @@ public class CustomVehicleEntity extends CustomEntity<Entity> {
     @Override
     @NotNull
     public ResourceLocation getTextureLocation() {
-        return ((VehicleResourceHolder) getResourceHolder()).textureHolder.id().orElseGet(MissingTextureAtlasSprite::getLocation);
+        return getModelRenderTarget().textureId();
     }
 
     @Override
@@ -124,17 +122,4 @@ public class CustomVehicleEntity extends CustomEntity<Entity> {
         return 0.7F;
     }
 
-    private static class VehicleResourceHolder extends ResourceHolder {
-        private final TextureHolder textureHolder;
-
-        protected VehicleResourceHolder(ModelRenderTargetLease lease, boolean fallback, VehicleModelResources vehicleResources) {
-            super(lease, fallback);
-            textureHolder = CustomTextureManager.register(vehicleResources.texture(), true);
-        }
-
-        @Override
-        public boolean isLoaded() {
-            return textureHolder.id().isPresent();
-        }
-    }
 }

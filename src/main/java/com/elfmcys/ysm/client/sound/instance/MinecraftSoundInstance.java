@@ -32,6 +32,11 @@ public class MinecraftSoundInstance extends AbstractTickableSoundInstance implem
         }
     }
 
+    @Override
+    public boolean canPlaySound() {
+        return !isStopped();
+    }
+
     public void setConfiguredVolume(float volume) {
         this.configuredVolume = volume;
     }

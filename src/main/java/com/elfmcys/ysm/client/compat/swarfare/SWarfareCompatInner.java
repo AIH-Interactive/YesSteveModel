@@ -6,13 +6,17 @@ import com.atsuishio.superbwarfare.event.ClientEventHandler;
 import com.atsuishio.superbwarfare.item.LungeMine;
 import com.atsuishio.superbwarfare.item.gun.GunItem;
 import com.elfmcys.ysm.client.entity.CustomHumanoidEntity;
+import com.elfmcys.ysm.client.model.locator.PlayerLocator;
 import com.elfmcys.ysm.geckolib3.core.PlayState;
 import com.elfmcys.ysm.geckolib3.core.builder.LoopType;
 import com.elfmcys.ysm.geckolib3.core.event.predicate.AnimationEvent;
-import com.elfmcys.ysm.geckolib3.model.AnimatedGeoModel;
+import com.elfmcys.ysm.geckolib3.geo.GeoRenderData;
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.math.Axis;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.entity.ItemRenderer;
+import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.tags.TagKey;
@@ -20,6 +24,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.NotNull;
@@ -43,26 +48,24 @@ public class SWarfareCompatInner {
         return false;
     }
 
-    static void renderOffhandGun(ItemStack heldItem, AnimatedGeoModel geoModel, LivingEntity player, PoseStack poseStack, int packedLight, float partialTicks) {
+    static void renderOffhandGun(ItemStack heldItem, GeoRenderData data, LivingEntity player, PoseStack poseStack, MultiBufferSource buffer, int packedLight) {
         ItemRenderer renderer = Minecraft.getInstance().getItemRenderer();
-        /*
-        if (heldItem.is(PISTOL) && !geoModel.tacPistolBones().isEmpty()) {
-            RenderUtils.prepMatrixForLocator(poseStack, geoModel.tacPistolBones());
-            poseStack.translate(0, -0.125, 0);
-            poseStack.scale(0.65f, 0.65f, 0.65f);
-            poseStack.mulPose(Axis.YP.rotationDegrees(90));
-            poseStack.mulPose(Axis.ZP.rotationDegrees(-90.0F));
-            MultiBufferSource buffer = Minecraft.getInstance().renderBuffers().bufferSource();
-            renderer.renderStatic(heldItem, ItemDisplayContext.FIXED, packedLight, OverlayTexture.NO_OVERLAY, poseStack, buffer, player.level(), player.getId());
+        if (heldItem.is(PISTOL)) {
+            data.modelState.visitLocatorGroup(PlayerLocator.get().pistol, poseStack, locatorPose -> {
+                locatorPose.translate(0, -0.125, 0);
+                locatorPose.scale(0.65f, 0.65f, 0.65f);
+                locatorPose.mulPose(Axis.YP.rotationDegrees(90));
+                locatorPose.mulPose(Axis.ZP.rotationDegrees(-90.0F));
+                renderer.renderStatic(heldItem, ItemDisplayContext.FIXED, packedLight, OverlayTexture.NO_OVERLAY, locatorPose, buffer, player.level(), player.getId());
+            });
         }
-        if (!heldItem.is(PISTOL) && !geoModel.tacRifleBones().isEmpty()) {
-            RenderUtils.prepMatrixForLocator(poseStack, geoModel.tacRifleBones());
-            poseStack.scale(0.65f, 0.65f, 0.65f);
-            poseStack.mulPose(Axis.YP.rotationDegrees(-180.0F));
-            MultiBufferSource buffer = Minecraft.getInstance().renderBuffers().bufferSource();
-            renderer.renderStatic(heldItem, ItemDisplayContext.FIXED, packedLight, OverlayTexture.NO_OVERLAY, poseStack, buffer, player.level(), player.getId());
+        if (!heldItem.is(PISTOL)) {
+            data.modelState.visitLocatorGroup(PlayerLocator.get().rifle, poseStack, locatorPose -> {
+                locatorPose.scale(0.65f, 0.65f, 0.65f);
+                locatorPose.mulPose(Axis.YP.rotationDegrees(-180.0F));
+                renderer.renderStatic(heldItem, ItemDisplayContext.FIXED, packedLight, OverlayTexture.NO_OVERLAY, locatorPose, buffer, player.level(), player.getId());
+            });
         }
-        */
     }
 
     @Nullable

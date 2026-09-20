@@ -4,12 +4,12 @@ import com.elfmcys.ysm.client.animation.AnimationRegister;
 import com.elfmcys.ysm.client.event.RegisterEntityRenderersEvent;
 import com.elfmcys.ysm.client.gui.CustomGuiPlayerEntity;
 import com.elfmcys.ysm.client.lang.LanguageManager;
-import com.elfmcys.ysm.client.model.ModelRenderTarget;
-import com.elfmcys.ysm.client.model.ClientModelService;
-import com.elfmcys.ysm.client.model.ModelRenderTargetLease;
-import com.elfmcys.ysm.client.texture.CustomTexture;
+import com.elfmcys.ysm.model.resource.client.AcquireResult;
+import com.elfmcys.ysm.model.resource.client.ModelRenderTarget;
+import com.elfmcys.ysm.model.service.ClientModelService;
+import com.elfmcys.ysm.model.resource.client.ResourceLease;
+import com.elfmcys.ysm.model.resource.client.ResourceRequest;
 import com.elfmcys.ysm.model.domain.Hash256;
-import com.elfmcys.ysm.task.TaskContext;
 import com.elfmcys.ysm.util.RenderUtil;
 import com.mojang.blaze3d.platform.Window;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -23,9 +23,6 @@ import net.minecraft.util.FormattedCharSequence;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
-import java.util.concurrent.CancellationException;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.ExecutionException;
 
 public final class CatalogTextureButton extends Button implements AutoCloseable {
     private static final int CARD_OVERLAY_Z = 3500;
@@ -35,37 +32,23 @@ public final class CatalogTextureButton extends Button implements AutoCloseable 
     private final String texture;
     private final CustomGuiPlayerEntity entity;
     private final SelectionHandler selection;
-    private @Nullable ModelRenderTargetLease lease;
+    private final ResourceRequest request;
+    private @Nullable ResourceLease lease;
     private @Nullable ModelRenderTarget renderTarget;
     private @Nullable Throwable error;
     private boolean closed;
 
     public CatalogTextureButton(int x, int y, Hash256 modelHash, String path, String texture,
-                                TaskContext context, CustomGuiPlayerEntity entity, SelectionHandler selection) {
+                                CustomGuiPlayerEntity entity, SelectionHandler selection) {
         super(x, y, 54, 102, Component.literal(texture), ignored -> { }, DEFAULT_NARRATION);
         this.modelHash = modelHash;
         this.path = path;
         this.texture = texture;
         this.entity = entity;
         this.selection = selection;
-        ClientModelService.instance().acquire(context, modelHash, texture)
-                .whenComplete((nextLease, loadError) -> Minecraft.getInstance().execute(() -> {
-                    if (nextLease == null) {
-                        if (!isCancellation(loadError)) {
-                            error = loadError;
-                        }
-                        return;
-                    }
-                    if (closed) {
-                        nextLease.close();
-                        return;
-                    }
-                    lease = nextLease;
-                    renderTarget = nextLease.renderTarget();
-                    entity.reset();
-                    entity.getPreviewInfo().setPreview(AnimationRegister.IDLE);
-                    entity.updateModelAndTexture(modelHash, texture);
-                }));
+        var service = ClientModelService.instance();
+        request = service.resourceRequest(modelHash, texture);
+        lease = service.getOrStart(request);
     }
 
     @Override
@@ -98,9 +81,9 @@ public final class CatalogTextureButton extends Button implements AutoCloseable 
     }
 
     private void updateLazyFailure() {
-        if (lease != null && !lease.isCurrent()) {
-            lease.close();
-            lease = null;
+        pollLease();
+        if (lease != null && !lease.isCurrent(request)) {
+            releaseLease();
             renderTarget = null;
             error = new IllegalStateException("The model content changed while this page was open");
             return;
@@ -109,12 +92,29 @@ public final class CatalogTextureButton extends Button implements AutoCloseable 
             return;
         }
         var resources = renderTarget.playerResources();
-        if (resources.defaultVariant().texture() instanceof CustomTexture customTexture) {
-            error = customTexture.failure().orElse(null);
-        }
-        if (error == null && (resources.animations().hasFailures()
-                || resources.fpArmAnimations().hasFailures())) {
+        if (resources.animations().hasFailures()
+                || resources.fpArmAnimations().hasFailures()) {
             error = new IllegalStateException("One or more preview animations failed to load");
+        }
+        if (error != null) {
+            releaseLease();
+            renderTarget = null;
+        }
+    }
+
+    private void pollLease() {
+        if (closed || lease == null || renderTarget != null || error != null) {
+            return;
+        }
+        var result = lease.poll();
+        if (result instanceof AcquireResult.Failed failed) {
+            error = failed.failure().cause();
+            releaseLease();
+        } else if (result instanceof AcquireResult.Ready ready) {
+            renderTarget = ready.target();
+            entity.reset();
+            entity.getPreviewInfo().setPreview(AnimationRegister.IDLE);
+            entity.updateModelAndTexture(modelHash, texture);
         }
     }
 
@@ -122,9 +122,15 @@ public final class CatalogTextureButton extends Button implements AutoCloseable 
     public void close() {
         closed = true;
         entity.reset();
-        if (lease != null) {
-            lease.close();
-            lease = null;
+        releaseLease();
+        renderTarget = null;
+    }
+
+    private void releaseLease() {
+        var current = lease;
+        lease = null;
+        if (current != null) {
+            current.cancelPending();
         }
     }
 
@@ -152,14 +158,6 @@ public final class CatalogTextureButton extends Button implements AutoCloseable 
             graphics.drawCenteredString(font, Component.literal(name), getX() + width / 2,
                     getY() + height - 15, 0xF3EFE0);
         }
-    }
-
-    private static boolean isCancellation(@Nullable Throwable error) {
-        while ((error instanceof CompletionException || error instanceof ExecutionException)
-                && error.getCause() != null) {
-            error = error.getCause();
-        }
-        return error instanceof CancellationException;
     }
 
     @FunctionalInterface

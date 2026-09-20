@@ -3,11 +3,13 @@ package com.elfmcys.ysm.client.compat.top;
 import com.elfmcys.ysm.YesSteveModel;
 import com.elfmcys.ysm.capability.ModelInfoCapabilityProvider;
 import com.elfmcys.ysm.capability.VehicleModelInfoCapabilityProvider;
-import com.elfmcys.ysm.model.server.ServerModelService;
+import com.elfmcys.ysm.model.service.ServerModelService;
 import com.elfmcys.ysm.network.NetworkHandler;
-import mixel.manifest.ManifestOuterClass;
-import mixel.manifest.asset.RenderTargetOuterClass;
+import com.elfmcys.ysm.proto.mixel.manifest.Manifest;
+import com.elfmcys.ysm.proto.mixel.manifest.asset.RenderTargetKind;
+import com.elfmcys.ysm.proto.mixel.manifest.info.Metadata;
 import com.elfmcys.ysm.util.ModelIdUtil;
+import java.util.function.Function;
 import mcjty.theoneprobe.api.ElementAlignment;
 import mcjty.theoneprobe.api.IProbeHitEntityData;
 import mcjty.theoneprobe.api.IProbeInfo;
@@ -22,8 +24,6 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.Nullable;
-
-import java.util.function.Function;
 
 public final class TopPlugin implements Function<ITheOneProbe, Void> {
     @Nullable
@@ -48,11 +48,12 @@ public final class TopPlugin implements Function<ITheOneProbe, Void> {
                         if (hash == null) {
                             return;
                         }
-                        ServerModelService.instance().snapshot().flatMap(snapshot -> snapshot.find(hash)).ifPresent(m -> {
-                            var metadata = m.view().getManifest().getInfo().getMetadata();
+                        ServerModelService.instance().catalog().flatMap(snapshot -> snapshot.find(hash)).ifPresent(m -> {
+                            var metadata = m.view().getManifest().info().metadata()
+                                    .map(Metadata::name).orElse("");
                             probeInfo.horizontal(probeInfo.defaultLayoutStyle().alignment(ElementAlignment.ALIGN_CENTER))
                                     .text(Component.translatable("top.yes_steve_model.model_info.id").append(
-                                            StringUtils.defaultIfBlank(metadata.getName(), ModelIdUtil.getFileNameFromPath(
+                                            StringUtils.defaultIfBlank(metadata, ModelIdUtil.getFileNameFromPath(
                                                     m.location().path().value()))));
                         });
                     }
@@ -64,13 +65,14 @@ public final class TopPlugin implements Function<ITheOneProbe, Void> {
                         if (hash == null) {
                             return;
                         }
-                        ServerModelService.instance().snapshot().flatMap(snapshot -> snapshot.find(hash))
+                        ServerModelService.instance().catalog().flatMap(snapshot -> snapshot.find(hash))
                                 .filter(m -> hasVehicle(m.view().getManifest(), entity))
                                 .ifPresent(m -> {
-                                    var metadata = m.view().getManifest().getInfo().getMetadata();
+                                    var metadata = m.view().getManifest().info().metadata()
+                                            .map(Metadata::name).orElse("");
                                     probeInfo.horizontal(probeInfo.defaultLayoutStyle().alignment(ElementAlignment.ALIGN_CENTER))
                                             .text(Component.translatable("top.yes_steve_model.model_info.id").append(
-                                                    StringUtils.defaultIfBlank(metadata.getName(), ModelIdUtil.getFileNameFromPath(m.location().path().value()))));
+                                                    StringUtils.defaultIfBlank(metadata, ModelIdUtil.getFileNameFromPath(m.location().path().value()))));
                                 });
                     }
                 });
@@ -82,17 +84,17 @@ public final class TopPlugin implements Function<ITheOneProbe, Void> {
             return ID;
         }
 
-        private static boolean hasVehicle(ManifestOuterClass.Manifest manifest,
+        private static boolean hasVehicle(Manifest manifest,
                                           Entity entity) {
             var id = entity.getType().builtInRegistryHolder().key().location();
-            for (var replacement : manifest.getRenderTargets()) {
-                if (replacement.getKind() != RenderTargetOuterClass.RenderTargetKind.RENDER_TARGET_KIND_VEHICLE) {
+            for (var replacement : manifest.renderTargets()) {
+                if (replacement.kind() != RenderTargetKind.RENDER_TARGET_KIND_VEHICLE) {
                     continue;
                 }
-                if (!replacement.hasMatch()) {
+                if (replacement.match().isEmpty()) {
                     continue;
                 }
-                for (var match : replacement.getMatch()) {
+                for (var match : replacement.match()) {
                     if (id.toString().equals(match)) {
                         return true;
                     }

@@ -1,24 +1,27 @@
 package com.elfmcys.ysm.model.catalog;
 
+import com.elfmcys.ysm.model.domain.ModelScanWarning;
+import java.util.List;
 import java.util.Objects;
 
-public record ReloadResult(long reloadGeneration, boolean committed,
-                           boolean catalogChanged, int modelCount, int packCount,
-                           int errorCount, ReloadStats stats, String failureMessage) {
+public record ReloadResult(ReloadStatus status, int modelCount, int errorCount,
+                           String message,
+                           List<ModelScanWarning> warnings) {
     public ReloadResult {
-        Objects.requireNonNull(stats, "stats");
-        failureMessage = Objects.requireNonNullElse(failureMessage, "");
+        Objects.requireNonNull(status, "status");
+        message = Objects.requireNonNullElse(message, "");
+        warnings = List.copyOf(warnings);
     }
 
-    public static ReloadResult failed(ReloadableCatalogSnapshot current, String message) {
-        return new ReloadResult(current.reloadGeneration(), false, false,
-                current.models().size(), current.packs().size(),
-                current.report().errorCount(), ReloadStats.empty(), message);
+    public ReloadResult(ReloadStatus status, int modelCount, int errorCount,
+                        String message) {
+        this(status, modelCount, errorCount, message, List.of());
     }
 
-    public static ReloadResult unchanged(ReloadableCatalogSnapshot current) {
-        return new ReloadResult(current.reloadGeneration(), true, false,
-                current.models().size(), current.packs().size(),
-                current.report().errorCount(), ReloadStats.empty(), "");
+    public int warningCount() {
+        return warnings.stream()
+                .mapToInt(ModelScanWarning::occurrences)
+                .sum();
     }
+
 }

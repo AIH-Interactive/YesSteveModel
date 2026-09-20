@@ -1,6 +1,6 @@
 package com.elfmcys.ysm.model.domain;
 
-import com.elfmcys.ysm.model.catalog.CatalogRootKind;
+import com.elfmcys.ysm.model.catalog.source.CatalogRootKind;
 
 import java.util.Map;
 import java.util.Objects;
@@ -11,7 +11,7 @@ public record ModelPackDescriptor(
         String name,
         String description,
         Map<String, LocalizedText> translations,
-        byte[] coverHash,
+        Hash256 coverHash,
         String coverFormat,
         int coverSize) implements Comparable<ModelPackDescriptor> {
 
@@ -21,19 +21,10 @@ public record ModelPackDescriptor(
         name = Objects.requireNonNullElse(name, "");
         description = Objects.requireNonNullElse(description, "");
         translations = Map.copyOf(translations);
-        coverHash = coverHash == null ? new byte[0] : coverHash.clone();
         coverFormat = Objects.requireNonNullElse(coverFormat, "");
-        if (coverHash.length != 0 && coverHash.length != Hash256.SIZE) {
-            throw new IllegalArgumentException("Pack cover hash must be empty or 32 bytes");
-        }
         if (coverSize < 0) {
             throw new IllegalArgumentException("Pack cover size cannot be negative");
         }
-    }
-
-    @Override
-    public byte[] coverHash() {
-        return coverHash.clone();
     }
 
     @Override

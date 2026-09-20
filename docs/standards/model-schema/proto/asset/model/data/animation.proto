@@ -3,6 +3,8 @@ syntax = "proto3";
 
 package mixel.asset.model.data;
 
+import "common/program.proto";
+
 message AnimationFile {
   repeated Animation animations = 1;
 }
@@ -10,24 +12,25 @@ message AnimationFile {
 message Animation {
   string name = 1;
   float length = 2;
-  LoopType loop = 3;
-  MolangValue blend_weight = 4;
+  optional LoopType loop = 3;
+  optional ExpressionValue blend_weight = 4;
   repeated BoneAnimation bone_animations = 5;
   repeated InstructionKeyFrame instruction_keyframes = 6;
+  repeated EventKeyFrame sound_keyframes = 7;
 }
 
-message MolangValue {
+message ExpressionValue {
   oneof value {
     float num = 1;
-    string str = 2;
+    common.Program program = 2;
   }
 }
 
 message BoneKeyFrame {
   float start_tick = 1;
   EasingType easing_type = 2;
-  repeated MolangValue pre = 3;
-  repeated MolangValue post = 4;  // pre == post 时该值为空
+  repeated ExpressionValue pre = 3;
+  repeated ExpressionValue post = 4;  // pre == post 时该值为空
 }
 
 message BoneAnimation {
@@ -43,7 +46,7 @@ message EventKeyFrame {
 }
 
 message InstructionKeyFrame {
-  repeated string expr = 1;
+  common.Program programs = 1;
   float start_tick = 2;
 }
 

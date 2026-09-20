@@ -1,7 +1,7 @@
 package com.elfmcys.ysm.geckolib3.geo.render.built;
 
 import com.elfmcys.ysm.geckolib3.core.molang.util.StringPool;
-import mixel.asset.model.data.GeoModelOuterClass;
+import com.elfmcys.ysm.proto.mixel.asset.model.data.Bone;
 import org.joml.Vector3f;
 
 public class GeoBone {
@@ -12,20 +12,19 @@ public class GeoBone {
     private final Vector3f pivot;
     private final boolean debug;
 
-    public GeoBone(GeoModelOuterClass.Bone bone, GeoLocator locator) {
-        if (!bone.hasName() || bone.getName().isEmpty() ||
-                !bone.hasRotate() || bone.getRotate().length() != 3 ||
-                !bone.hasPivot() || bone.getPivot().length() != 3) {
+    public GeoBone(Bone bone, GeoLocator locator) {
+        if (bone.nameNullOrBlank()
+                || bone.rotate().size() != 3 || bone.pivot().size() != 3) {
             throw new IllegalArgumentException("Invalid bone metadata");
         }
-        this.name = bone.getName();
+        this.name = bone.name();
         this.pooledName = StringPool.computeIfAbsent(name);
         this.locatorType = locator;
-        this.rotation = new Vector3f(bone.getRotate().get(0),
-                bone.getRotate().get(1), bone.getRotate().get(2));
-        this.pivot = new Vector3f(bone.getPivot().get(0),
-                bone.getPivot().get(1), bone.getPivot().get(2));
-        this.debug = bone.hasDebug() && bone.getDebug();
+        this.rotation = new Vector3f(bone.rotate().getFloat(0),
+                bone.rotate().getFloat(1), bone.rotate().getFloat(2));
+        this.pivot = new Vector3f(bone.pivot().getFloat(0),
+                bone.pivot().getFloat(1), bone.pivot().getFloat(2));
+        this.debug = bone.debug().orElse(false);
     }
 
     public String name() {

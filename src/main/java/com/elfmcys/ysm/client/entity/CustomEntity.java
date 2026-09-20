@@ -5,10 +5,11 @@ import com.elfmcys.ysm.client.animation.debug.CustomDebugSource;
 import com.elfmcys.ysm.client.animation.molang.MolangEventWrapper;
 import com.elfmcys.ysm.client.animation.molang.PhysicsManager;
 import com.elfmcys.ysm.client.gui.overlay.DebugAnimationScreen;
-import com.elfmcys.ysm.client.model.ModelRenderTarget;
-import com.elfmcys.ysm.client.model.ClientModelService;
-import com.elfmcys.ysm.client.model.ModelRenderTargetLease;
-import com.elfmcys.ysm.client.sound.data.ModelSoundHolder;
+import com.elfmcys.ysm.model.resource.client.AcquireResult;
+import com.elfmcys.ysm.model.resource.client.ModelRenderTarget;
+import com.elfmcys.ysm.model.service.ClientModelService;
+import com.elfmcys.ysm.model.resource.client.ResourceLease;
+import com.elfmcys.ysm.model.resource.client.ResourceRequest;
 import com.elfmcys.ysm.client.sound.stream.AudioStreamProvider;
 import com.elfmcys.ysm.geckolib3.core.event.predicate.AnimationEvent;
 import com.elfmcys.ysm.geckolib3.core.molang.context.DebugSource;
@@ -20,6 +21,7 @@ import com.elfmcys.ysm.geckolib3.geo.render.built.GeoModel;
 import com.elfmcys.ysm.geckolib3.model.AnimatableEntity;
 import com.elfmcys.ysm.model.domain.Hash256;
 import com.elfmcys.ysm.model.domain.RenderTargetIds;
+import com.elfmcys.ysm.util.Closeable;
 import com.elfmcys.ysm.util.ThreadTools;
 import com.elfmcys.ysm.util.UnsafeUtil;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -27,6 +29,7 @@ import net.minecraft.world.entity.Entity;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.Future;
 
@@ -34,7 +37,7 @@ import java.util.concurrent.Future;
  * 自动管理当前 model id 和 model container，并在找不到指定模型时 fallback 到默认模型
  */
 public abstract class CustomEntity<T extends Entity> extends AnimatableEntity<T> {
-    private final EntityModelBinding modelBinding = new EntityModelBinding();
+    private final EntityModelBinding modelBinding;
     private ModelRenderTarget currentModelRenderTarget;
     private boolean modelFallback;
     private int lastCheckUpdateTime;
@@ -49,7 +52,12 @@ public abstract class CustomEntity<T extends Entity> extends AnimatableEntity<T>
     private Future<GeoRenderData> asyncTask;
 
     protected CustomEntity(T entity, boolean asyncUpdate) {
+        this(entity, asyncUpdate, new EntityModelBinding());
+    }
+
+    CustomEntity(T entity, boolean asyncUpdate, EntityModelBinding modelBinding) {
         super(entity);
+        this.modelBinding = Objects.requireNonNull(modelBinding, "modelBinding");
         if (asyncUpdate) {
             AnimationParallelTicker.add(this);
         }
@@ -105,13 +113,24 @@ public abstract class CustomEntity<T extends Entity> extends AnimatableEntity<T>
     }
 
     protected final void updateModelHash(Hash256 modelHash) {
-        modelBinding.updateModelHash(modelHash);
+        modelBinding.updateModelHash(
+                modelHash, requestedRenderTargetId(), requestedTextureName());
         checkModelRenderTargetUpdate();
     }
 
     private void checkModelRenderTargetUpdate() {
         modelBinding.synchronize(
                 requestedRenderTargetId(), requestedTextureName(), fallbackRenderTargetId(), this::createResourceHolder);
+        applyBoundResource();
+    }
+
+    protected final void installReadyForPreview(ResourceRequest request,
+                                                ResourceLease lease) {
+        modelBinding.installReadyForPreview(request, lease, this::createResourceHolder);
+        applyBoundResource();
+    }
+
+    private void applyBoundResource() {
         var resourceHolder = modelBinding.resourceHolder();
         if (resourceHolder != null) {
             if ((resourceHolder.model != currentModelRenderTarget || resourceHolder.fallback != modelFallback) && resourceHolder.isLoaded()) {
@@ -126,7 +145,7 @@ public abstract class CustomEntity<T extends Entity> extends AnimatableEntity<T>
     }
 
     @Nullable
-    protected abstract ResourceHolder createResourceHolder(ModelRenderTargetLease lease, boolean isFallback);
+    protected abstract ResourceHolder createResourceHolder(ResourceLease lease, boolean isFallback);
 
     protected String requestedTextureName() {
         return "";
@@ -149,7 +168,6 @@ public abstract class CustomEntity<T extends Entity> extends AnimatableEntity<T>
         if (resourceHolder == null) {
             return;
         }
-        resourceHolder.soundHolder = null;
         deferHandler = newModel.assets().eventHandlers().get(MolangEventWrapper.DEFER);
     }
 
@@ -201,7 +219,15 @@ public abstract class CustomEntity<T extends Entity> extends AnimatableEntity<T>
 
     @Override
     public Optional<AudioStreamProvider> getSoundStream(String name) {
-        return Optional.empty();
+        var target = currentModelRenderTarget;
+        if (target == null) {
+            return Optional.empty();
+        }
+        var source = target.assets().sounds().get(name);
+        if (source == null) {
+            return Optional.empty();
+        }
+        return Optional.of(ClientModelService.instance().createSoundPlayback(source));
     }
 
     @Override
@@ -266,16 +292,18 @@ public abstract class CustomEntity<T extends Entity> extends AnimatableEntity<T>
         return true;
     }
 
-    protected static class ResourceHolder implements AutoCloseable {
-        private final ModelRenderTargetLease lease;
+    protected static class ResourceHolder implements Closeable {
+        private final ResourceLease lease;
         public final ModelRenderTarget model;
         public final boolean fallback;
-        @Nullable
-        public ModelSoundHolder soundHolder;
+        private boolean closed;
 
-        protected ResourceHolder(ModelRenderTargetLease lease, boolean fallback) {
+        protected ResourceHolder(ResourceLease lease, boolean fallback) {
             this.lease = lease;
-            this.model = lease.renderTarget();
+            if (!(lease.poll() instanceof AcquireResult.Ready ready)) {
+                throw new IllegalArgumentException("Resource holder requires a ready lease");
+            }
+            this.model = ready.target();
             this.fallback = fallback;
         }
 
@@ -283,13 +311,17 @@ public abstract class CustomEntity<T extends Entity> extends AnimatableEntity<T>
             return true;
         }
 
-        boolean isCurrent() {
-            return lease.isCurrent();
+        ResourceLease lease() {
+            return lease;
         }
 
         @Override
         public void close() {
-            lease.close();
+            if (closed) {
+                return;
+            }
+            closed = true;
         }
+
     }
 }

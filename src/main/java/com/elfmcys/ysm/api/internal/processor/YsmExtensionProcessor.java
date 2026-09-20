@@ -1,7 +1,7 @@
 package com.elfmcys.ysm.api.internal.processor;
 
-import com.elfmcys.ysm.api.annotation.YsmExtension;
 import com.elfmcys.ysm.api.annotation.YsmEventHandler;
+import com.elfmcys.ysm.api.annotation.YsmExtension;
 import com.elfmcys.ysm.api.internal.processor.asm.ClassReader;
 import com.sun.source.util.JavacTask;
 import com.sun.source.util.TaskEvent;
@@ -9,6 +9,7 @@ import com.sun.source.util.TaskListener;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -103,7 +104,7 @@ public final class YsmExtensionProcessor extends AbstractProcessor {
         if (eventHandlerAnnotation != null) {
             List<? extends Element> eventHandlers = new ArrayList<>(
                     roundEnv.getElementsAnnotatedWith(eventHandlerAnnotation));
-            eventHandlers.sort(java.util.Comparator.comparing(this::stableElementName));
+            eventHandlers.sort(Comparator.comparing(this::stableElementName));
             for (Element element : eventHandlers) {
                 if (element.getKind() != ElementKind.CLASS) {
                     messager.printMessage(Diagnostic.Kind.ERROR,
@@ -133,7 +134,7 @@ public final class YsmExtensionProcessor extends AbstractProcessor {
         List<? extends Element> annotatedElements = extensionAnnotation == null
                 ? List.of()
                 : new ArrayList<>(roundEnv.getElementsAnnotatedWith(extensionAnnotation));
-        annotatedElements.sort(java.util.Comparator.comparing(this::stableElementName));
+        annotatedElements.sort(Comparator.comparing(this::stableElementName));
         for (Element element : annotatedElements) {
             if (element.getKind().isClass() || element.getKind().isInterface()) {
                 TypeElement owner = (TypeElement) element;

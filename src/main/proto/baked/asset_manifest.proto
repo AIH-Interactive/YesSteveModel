@@ -3,10 +3,9 @@ syntax = "proto3";
 package ysm.baked.asset;
 
 message BakedAssetManifest {
-  bytes model_hash = 1;
-  bytes descriptor_hash = 2;
+  bytes container_id = 1;
   string render_target_id = 3;
-  bytes definition_hash = 4;
+  bytes input_hash = 4;
   repeated BakedAnimationEntry animations = 5;
 }
 

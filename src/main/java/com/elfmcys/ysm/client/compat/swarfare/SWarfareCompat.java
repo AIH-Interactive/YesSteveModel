@@ -4,8 +4,9 @@ import com.elfmcys.ysm.client.entity.CustomHumanoidEntity;
 import com.elfmcys.ysm.geckolib3.core.PlayState;
 import com.elfmcys.ysm.geckolib3.core.builder.LoopType;
 import com.elfmcys.ysm.geckolib3.core.event.predicate.AnimationEvent;
-import com.elfmcys.ysm.geckolib3.model.AnimatedGeoModel;
+import com.elfmcys.ysm.geckolib3.geo.GeoRenderData;
 import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
@@ -46,10 +47,10 @@ public class SWarfareCompat {
         return false;
     }
 
-    public static void renderOffsetHand(ItemStack offhandItem, AnimatedGeoModel geoModel, LivingEntity livingEntity, PoseStack poseStack, int packedLight, float partialTicks) {
+    public static void renderOffsetHand(ItemStack offhandItem, GeoRenderData data, LivingEntity livingEntity, PoseStack poseStack, MultiBufferSource buffer, int packedLight) {
         if (INSTALLED && SWarfareCompatInner.isGun(offhandItem)) {
             poseStack.pushPose();
-            SWarfareCompatInner.renderOffhandGun(offhandItem, geoModel, livingEntity, poseStack, packedLight, partialTicks);
+            SWarfareCompatInner.renderOffhandGun(offhandItem, data, livingEntity, poseStack, buffer, packedLight);
             poseStack.popPose();
         }
     }

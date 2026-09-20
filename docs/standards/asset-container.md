@@ -1,8 +1,6 @@
-<!-- SPDX-License-Identifier: CC0-1.0 -->
+# Asset Container 规范
 
-# Asset Container 0.1.0-unstable
-
-Asset Container 是与资产类型无关的二进制封装标准，负责描述 schema、chunk、存储编码、对齐和完整性。本标准独立于 YSM、Minecraft 及任何具体应用，按 [CC0 1.0 Universal](../../LICENSES/CC0-1.0.txt) 发布。
+Asset Container 是与资产类型无关的二进制封装层。它负责描述 schema、chunk、存储编码、对齐和完整性，不定义模型、缓存、网络或资源所有权。本规范描述当前 wire version `0.1.0-unstable`（major 0、minor 1、patch 0、qualifier `unstable`）；该格式尚未冻结。
 
 文中的“必须”“不得”“应”“可以”分别表示规范要求、禁止、建议和可选行为。除特别说明外，多字节整数均为 little-endian，区间均为左闭右开。
 
@@ -53,9 +51,9 @@ Magic 必须逐字节等于：
 EF BB BF 59 53 47 50 32 0A 0A
 ```
 
-其中可见 ASCII 部分为 `YSGP2\n\n`。派生偏移如下：
+其中可见 ASCII 部分为 `YSGP2\n\n`。`YSGP2` 是沿用的历史文件签名，只用于字节级识别；其中的 `2` 不表示本规范的版本 major，也不表示任何项目对本规范的所有权。
 
-`YSGP2` 是沿用的历史文件签名，仅用于字节级识别；其中的 `2` 不表示本标准的 SemVer major，也不表示 YSM 或任何项目对本标准的所有权。
+派生偏移如下：
 
 ```text
 headerOffset        = magicSize + summarySize + 1
@@ -83,7 +81,7 @@ Base header 从 `headerOffset` 开始：
 | 56 | 4 | `propertyDataSize` | `int32` | 必须非负 |
 | 60 | 4 | `chunkTableSize` | `int32` | 必须非负 |
 
-`headerSize > 64` 时，剩余字节是未知 header extension。Consumer 应跳过它们；这些字节仍属于 verification input。当前 consumer 必须精确匹配 `0.1.0-unstable` 的 major、minor、patch 和 qualifier，任一字段不同都必须拒绝，不进行 minor、patch 或 qualifier 兼容推断。
+`headerSize > 64` 时，剩余字节是未知 header extension。兼容 consumer 应跳过它们；这些字节仍属于 verification input。Consumer 将四个版本字段组合为 canonical `major.minor.patch[-qualifier]` 后执行版本准入。当前 profile 必须精确匹配 `0.1.0-unstable`，任一字段不同都必须拒绝；通用门禁还要求当前或候选 qualifier 大小写不敏感地包含 `unstable`、`dev` 或 `snapshot` 时，两个完整原始版本字符串严格相等。两侧均不含这些标记时才可委托该 profile 的稳定版策略；当前 profile 的稳定版策略仍为 exact，不进行 minor、patch 或 qualifier 兼容推断。
 
 ## Schema properties
 
@@ -154,10 +152,20 @@ Verification input 是 `[0, chunkDataOffset)`，包括 magic、summary 及终止
 
 | Encoding | Payload | 状态 |
 |---|---|---|
-| `BLAKE3` | verification input 的 BLAKE3-256，32 bytes | 支持 |
+| `BLAKE3` | `hash + signLength + sign` | 支持 |
 | `ED25519` | 未定义完整 payload 与信任策略 | 仅保留名称，必须按不支持拒绝 |
 
-Verification table entry 还必须满足：`size = 32`、`decodeSize = 0`、`flags = 0`、`alignmentShift = 0`、`hash` 全零。未知 verification encoding 必须拒绝。
+`BLAKE3` payload 固定为：
+
+```text
+byte[32] hash                  # verification input 的 BLAKE3-256
+uint16   signLength            # little-endian
+byte[signLength] sign
+```
+
+Payload 长度必须精确等于 `34 + signLength`；旧 32-byte payload、缺失长度和尾随 bytes 均拒绝。`hash` 同时是 `ContainerId`。`sign` 是可为空的 opaque bytes，当前不定义算法、key id、作者、信任或授权语义；相同长度的 `sign` 改变不影响 `ContainerId`，改变 `signLength` 会改变 chunk table 中的 `size`，从而改变 verification input 和 `ContainerId`。
+
+Verification table entry 还必须满足：`size = 34 + signLength`、`decodeSize = 0`、`flags = 0`、`alignmentShift = 0`、`hash` 全零。未知 verification encoding 必须拒绝。
 
 BLAKE3 verification 只提供意外损坏检测。能够重写文件的攻击者也能重算 digest；它不提供作者身份、授权或抗篡改保证。
 
@@ -170,7 +178,7 @@ Metadata reader 必须按以下顺序 fail closed：
 3. 精确消费 schema property 区域并拒绝重复 type。
 4. 精确消费 chunk table，拒绝重复 chunk type 和非法 alignment。
 5. 检查首项 verification 的结构约束。
-6. 验证 verification input。
+6. 验证 payload 长度、verification input 与 `ContainerId`；调用方提供 expected `ContainerId` 时再做精确比较。
 7. 根据调用方声明，确认输入是恰好结束的 preamble，或继续执行完整文件验证。
 8. 完整文件逐 chunk 检查零 padding、stored size、解码长度和 hash，并拒绝截断或尾随数据。
 
@@ -178,6 +186,6 @@ Metadata reader 必须按以下顺序 fail closed：
 
 ## 生产者要求
 
-生产者必须先确定全部 schema properties 和 chunk descriptors，再生成 verification payload。完整文件必须按 table 顺序写出所有 payload 和零 padding；preamble 导出必须在 verification payload 后立即结束。生产者不得输出非 ASCII 字符、混合 inline/external payload 或尾随私有数据。
+生产者必须先确定全部 schema properties、chunk descriptors 和 `signLength`，再生成 verification payload。当前 producer 可以写空 `sign`，但必须保留长度字段。完整文件必须按 table 顺序写出所有 payload 和零 padding；preamble 导出必须在 verification payload 后立即结束。生产者不得输出非 ASCII 字符、混合 inline/external payload 或尾随私有数据。
 
 上层 schema 负责定义 chunk type、非 zstd encoding、`decodeSize`、`flags` 和资源引用语义。当前模型 schema 见 [模型 Schema](model-schema/README.md)，测试要求见 [格式一致性](conformance.md)。

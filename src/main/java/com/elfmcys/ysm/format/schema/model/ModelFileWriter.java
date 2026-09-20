@@ -1,12 +1,15 @@
 package com.elfmcys.ysm.format.schema.model;
 
 import com.elfmcys.ysm.YesSteveModel;
-import com.elfmcys.ysm.natives.image.Image;
+import com.elfmcys.ysm.buffer.UniBuffer;
 import com.elfmcys.ysm.format.schema.file.AssetFileWriter;
-import mixel.manifest.ManifestOuterClass;
-import net.minecraftforge.fml.loading.moddiscovery.ModFileInfo;
-
+import com.elfmcys.ysm.model.domain.Hash256;
+import com.elfmcys.ysm.natives.image.Image;
+import com.elfmcys.ysm.proto.mixel.manifest.Manifest;
+import com.elfmcys.ysm.util.ProtoBytes;
 import java.io.IOException;
+import java.util.Objects;
+import net.minecraftforge.fml.loading.moddiscovery.ModFileInfo;
 
 public class ModelFileWriter extends AssetFileWriter {
     public ModelFileWriter() {
@@ -24,14 +27,33 @@ public class ModelFileWriter extends AssetFileWriter {
         }
     }
 
-    public void setManifest(ManifestOuterClass.Manifest manifest) throws IOException {
+    public void setManifest(Manifest manifest) throws IOException {
+        setManifestProperties(manifest);
         addProtoChunk(ModelFileConstant.MANIFEST_CHUNK_NAME, manifest, 0);
+    }
+
+    public void setManifestExact(Manifest manifest,
+                                 UniBuffer logicalBytes) throws IOException {
+        setManifestProperties(manifest);
+        addRawChunk(ModelFileConstant.MANIFEST_CHUNK_NAME,
+                Objects.requireNonNull(logicalBytes, "logicalBytes"), 0);
+    }
+
+    private void setManifestProperties(Manifest manifest)
+            throws IOException {
+        var properties = manifest.info().properties();
+        if (properties.modelId().remaining() != Hash256.SIZE) {
+            throw new IOException("Manifest contains no valid full model hash");
+        }
+        var hash = properties.modelId();
+        setProperty(ModelFileConstant.PROP_MODEL_ID,
+                new Hash256(ProtoBytes.copy(hash)).toString());
         generateSummary(manifest);
     }
 
-    private void generateSummary(ManifestOuterClass.Manifest manifest) {
-        if (manifest.hasInfo() && manifest.getInfo().hasMetadata() && manifest.getInfo().getMetadata().hasName()) {
-            setSummary(manifest.getInfo().getMetadata().getName());
+    private void generateSummary(Manifest manifest) {
+        if (manifest.info().hasMetadata()) {
+            setSummary(manifest.info().metadataUnsafe().name());
         } else {
             setSummary("");
         }

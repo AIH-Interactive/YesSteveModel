@@ -10,7 +10,9 @@
 | runtime `BakedModel` | 当前进程按所选 SIMD 能力组织的只读热数据 | 内部运行时对象 |
 | serialized baked cache | 校验后重建 `BakedModel` 的磁盘派生物 | 机器与 renderer ABI 相关，可删除 |
 
-Serialized cache 不是 runtime 内存映像、Model Schema 或 GPU buffer 格式。其兼容身份必须覆盖平台、native ABI、bake 版本、SIMD capability、模型与资源身份、基础纹理内容、UV 约定和烘焙选项。
+Serialized cache 不是 runtime 内存映像、Model Schema 或 GPU buffer 格式。其兼容性由模型管理内部的私有 cache key 覆盖精确内容与派生输入，renderer 只提供 bake 版本、native ABI、SIMD capability、UV 约定和烘焙选项等技术 profile，不接收或解释容器身份。派生物的通用存储规则见 [Storage 与 cache](../model-management/storage-and-cache.md)。
+
+Serialized cache 的私有 manifest 直接保存完整 `GeoModel`，包括 cubes。Java 通过 QuickBuffers 的 buffer-backed view 读取该消息，不再为避免 cubes 拷贝维护独立 `GeoModelIndex` 或模型到 index 的投影；native baked payload 仍是另一个受 cache profile 约束的 chunk。
 
 ## 核心数据关系
 
@@ -27,7 +29,7 @@ flowchart TB
     CG --> TG["optional tangent and handedness"]
 ```
 
-`BakedModel` 以稳定 preorder 保存骨骼，使 parent 总在 child 之前，并记录 subtree range 以支持整棵跳过。每个 `CubeGroup` 只属于一个骨骼和一个逻辑分区，是烘焙、调度和批量处理的共同单位；分区范围与累计容量允许 `RenderSchedule` 直接计算工作量。
+`BakedModel` 以稳定 preorder 保存骨骼，并记录 subtree range 以支持整棵跳过。每个 `CubeGroup` 只属于一个骨骼和一个逻辑分区，是烘焙、调度和批量处理的共同单位；分区范围与累计容量允许 `RenderSchedule` 直接计算工作量。
 
 ## 烘焙流程
 
@@ -64,7 +66,7 @@ Alpha 分类只读取基础 RGBA 纹理的相关 UV 区域：全透明面可删�
 
 PBR tangent 在最终 UV 上由 face 几何与 UV 梯度预计算，保存方向与 handedness；退化 UV 产生确定性结果。Render 再按最终变换修正方向、镜像和背面 handedness；Bake 不预设本帧 model matrix。
 
-Blockbench 一致性在此阶段体现为：不重排 authoring face 语义，不用重算 normal 覆盖显式输入，不丢弃无法证明为不可见的面，并保留负尺寸或反向 cube。平台 shader、光照与混合差异仍可能造成最终像素差异，因此这不是逐像素一致承诺。
+Authoring 几何及视觉保证见[geometry-regions](../../product-decisions/decisions/geometry-regions.md)。上述 normal、winding、反向 cube 与四分区映射是 Bake 的实现边界。
 
 ## AoSoA 与能力相关布局
 

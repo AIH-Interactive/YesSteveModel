@@ -2,24 +2,28 @@ package com.elfmcys.ysm.model.storage;
 
 import com.elfmcys.ysm.format.parser.ModelParser;
 import com.elfmcys.ysm.format.parser.RawCompileResult;
+import com.elfmcys.ysm.format.schema.model.ModelFileIdentityReader;
 import com.elfmcys.ysm.format.vfs.Directory;
-import com.elfmcys.ysm.model.catalog.CatalogModelLocation;
-import com.elfmcys.ysm.model.catalog.CatalogRootKind;
+import com.elfmcys.ysm.model.catalog.source.CatalogModelLocation;
+import com.elfmcys.ysm.model.catalog.source.CatalogRootKind;
 import com.elfmcys.ysm.model.domain.Hash256;
+import com.elfmcys.ysm.model.domain.ModelFileIdentity;
 import com.elfmcys.ysm.model.domain.ModelPath;
+import java.io.IOException;
+import java.nio.channels.FileChannel;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.attribute.FileTime;
-import java.util.ArrayList;
-import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
-
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -31,132 +35,143 @@ class ConvertedObjectStoreTest {
     Path temp;
 
     private static Path fixture;
-    private static Hash256 fixtureHash;
+    private static ModelFileIdentity identity;
 
     @BeforeAll
     static void createFixture() throws Exception {
         var manifest = ConvertedObjectStoreTest.class.getResource(
                 "/assets/ysm/builtin/default/ysm.json");
-        var source = Path.of(java.util.Objects.requireNonNull(manifest).toURI()).getParent();
+        var source = Path.of(Objects.requireNonNull(manifest).toURI()).getParent();
         try (var vfs = new Directory(source)) {
-            fixture = ModelParser.parse(vfs, Files.createDirectories(fixtureTemp.resolve("model")),
-                    com.elfmcys.ysm.format.parser.DefaultAnimationFilter.keepAll());
+            fixture = ModelParser.parseBuiltinDefault(
+                    vfs, Files.createDirectories(fixtureTemp.resolve("model")));
         }
-        fixtureHash = ModelFileHandle.openDirect(fixture, location("fixture"))
-                .descriptor().modelHash();
+        try (var channel = FileChannel.open(fixture, StandardOpenOption.READ)) {
+            identity = ModelFileIdentityReader.read(channel);
+        }
     }
 
     @Test
-    void knownHashHitSkipsCompiler() throws Exception {
-        var store = store(temp.resolve("hit"));
-        store.commit(new RawCompileResult(fixtureHash, fixture), location("default"));
-        var conversions = new AtomicInteger();
+    void convertedStoreKeepsItsDocumentedLayout() {
+        var cacheRoot = temp.resolve("cache");
+        var store = new ConvertedObjectStore(cacheRoot);
 
-        var object = store.resolveKnownHash(temp.resolve("unused"), location("default"),
-                fixtureHash, (source, output) -> {
-                    conversions.incrementAndGet();
-                    throw new AssertionError("compiler must not run");
-                });
-
-        assertEquals(fixtureHash, object.key().modelHash());
-        assertEquals(0, conversions.get());
+        assertEquals(cacheRoot.resolve("converted/.tmp"), store.temporaryRoot());
+        assertEquals(cacheRoot.resolve("converted").resolve(identity.modelId().toString())
+                        .resolve(identity.containerId() + ".mxc"),
+                store.objectPath(identity.modelId(), identity.containerId()));
     }
 
     @Test
-    void knownHashMissCompilesOnceAcrossConcurrentCallers() throws Exception {
-        var store = store(temp.resolve("miss"));
-        var conversions = new AtomicInteger();
-        var executor = Executors.newFixedThreadPool(4);
+    void cacheProbeReadsOnlyExactIdentityPreamble() throws Exception {
+        var cacheRoot = temp.resolve("cache");
+        var target = container(cacheRoot, identity.modelId(), identity.containerId());
+        Files.createDirectories(target.getParent());
+        var bytes = Files.readAllBytes(fixture);
+        bytes[bytes.length - 1] ^= 1;
+        Files.write(target, bytes);
+        var entry = new ConvertedSourceIndex(identity,
+                "custom/raw", "test-version");
+
+        assertTrue(new ConvertedObjectStore(cacheRoot).findIdentity(entry).isPresent());
+        assertTrue(Files.exists(target));
+    }
+
+    @Test
+    void tupleMismatchIsAMissWithoutDeletingTheExactObject() throws Exception {
+        var cacheRoot = temp.resolve("cache");
+        var expectedModel = different(identity.modelId());
+        var expectedContainer = different(identity.containerId());
+        var target = container(cacheRoot, expectedModel, expectedContainer);
+        var sibling = target.resolveSibling("keep.mxc");
+        Files.createDirectories(target.getParent());
+        Files.copy(fixture, target);
+        Files.writeString(sibling, "keep");
+        var entry = new ConvertedSourceIndex(
+                new ModelFileIdentity(expectedModel, expectedContainer),
+                "custom/raw", "test-version");
+        var original = Files.readAllBytes(target);
+
+        assertTrue(new ConvertedObjectStore(cacheRoot).findIdentity(entry).isEmpty());
+        assertArrayEquals(original, Files.readAllBytes(target));
+        assertTrue(Files.exists(sibling));
+    }
+
+    @Test
+    void atomicCommitFailureKeepsThePreviousObjectAndCleansItsTemporary() throws Exception {
+        var cacheRoot = temp.resolve("cache");
+        var target = container(cacheRoot, identity.modelId(), identity.containerId());
+        Files.createDirectories(target.getParent());
+        var previous = new byte[]{9, 8, 7};
+        Files.write(target, previous);
+        var cache = new AtomicSharedCache(cacheRoot, (temporary, ignored) -> {
+            throw new IOException("injected atomic move failure");
+        });
+        var store = new ConvertedObjectStore(cacheRoot, cache);
+
+        assertThrows(IOException.class,
+                () -> store.commit(new RawCompileResult(identity.modelId(), fixture),
+                        new CatalogModelLocation(
+                                CatalogRootKind.CUSTOM,
+                                new ModelPath("fixture"))));
+
+        assertArrayEquals(previous, Files.readAllBytes(target));
+        try (var files = Files.list(target.getParent())) {
+            assertTrue(files.noneMatch(path -> path.getFileName().toString()
+                    .startsWith(target.getFileName() + ".tmp-")));
+        }
+    }
+
+    @Test
+    void concurrentQualifiedWritersLeaveACompletelyVerifiedObject() throws Exception {
+        var cacheRoot = temp.resolve("cache");
+        var compiled = new RawCompileResult(identity.modelId(), fixture);
+        var location = new CatalogModelLocation(
+                CatalogRootKind.CUSTOM,
+                new ModelPath("fixture"));
+        var first = CompletableFuture.runAsync(() ->
+                commit(new ConvertedObjectStore(cacheRoot), compiled, location));
+        var second = CompletableFuture.runAsync(() ->
+                commit(new ConvertedObjectStore(cacheRoot), compiled, location));
+
+        CompletableFuture.allOf(first, second).join();
+
+        var target = container(cacheRoot, identity.modelId(), identity.containerId());
+        try (var verified = ManagedContainer.verifyFile(target)) {
+            assertEquals(identity, verified.identity());
+        }
+    }
+
+    @Test
+    void missingStagedBackingDoesNotPublishAConvertedObject() {
+        var cacheRoot = temp.resolve("cache");
+        var target = container(cacheRoot, identity.modelId(), identity.containerId());
+
+        assertThrows(IOException.class,
+                () -> new ConvertedObjectStore(cacheRoot).commit(
+                        new RawCompileResult(identity.modelId(), temp.resolve("missing.ysm")),
+                        new CatalogModelLocation(
+                                CatalogRootKind.CUSTOM,
+                                new ModelPath("missing"))));
+        assertTrue(Files.notExists(target));
+    }
+
+    private static Path container(Path cacheRoot, Hash256 modelId, Hash256 containerId) {
+        return new ConvertedObjectStore(cacheRoot).objectPath(modelId, containerId);
+    }
+
+    private static Hash256 different(Hash256 value) {
+        var bytes = value.bytes();
+        bytes[0] ^= 1;
+        return new Hash256(bytes);
+    }
+
+    private static void commit(ConvertedObjectStore store, RawCompileResult compiled,
+                               CatalogModelLocation location) {
         try {
-            var tasks = new ArrayList<java.util.concurrent.Callable<VerifiedConvertedObject>>();
-            for (var index = 0; index < 4; index++) {
-                tasks.add(() -> store.resolveKnownHash(temp.resolve("raw"), location("default"),
-                        fixtureHash, copyingCompiler(conversions)));
-            }
-            for (var result : executor.invokeAll(tasks)) {
-                assertEquals(fixtureHash, result.get().key().modelHash());
-            }
-        } finally {
-            executor.shutdownNow();
+            store.commit(compiled, location);
+        } catch (IOException failure) {
+            throw new CompletionException(failure);
         }
-        assertEquals(1, conversions.get());
-    }
-
-    @Test
-    void corruptObjectIsQuarantinedAndRebuilt() throws Exception {
-        var paths = new SharedCachePaths(temp.resolve("corrupt"));
-        var profile = testProfile();
-        Files.createDirectories(paths.convertedObjects(profile));
-        Files.writeString(paths.convertedObjects(profile).resolve(fixtureHash + ".mxc"), "corrupt");
-        var conversions = new AtomicInteger();
-        var store = new ConvertedObjectStore(paths, new AtomicSharedCache(paths), profile);
-
-        var object = store.resolveKnownHash(temp.resolve("raw"), location("default"),
-                fixtureHash, copyingCompiler(conversions));
-
-        assertEquals(fixtureHash, object.key().modelHash());
-        assertEquals(1, conversions.get());
-        try (var files = Files.list(paths.convertedObjects(profile))) {
-            assertTrue(files.anyMatch(path -> path.getFileName().toString()
-                    .startsWith(fixtureHash + ".mxc.corrupt-")));
-        }
-    }
-
-    @Test
-    void hashMismatchNeverCommitsExpectedObject() throws Exception {
-        var paths = new SharedCachePaths(temp.resolve("mismatch"));
-        var store = new ConvertedObjectStore(paths, new AtomicSharedCache(paths),
-                testProfile());
-        var bytes = fixtureHash.bytes();
-        bytes[0] ^= 1;
-        var expected = new Hash256(bytes);
-
-        assertThrows(ModelHashMismatchException.class, () -> store.resolveKnownHash(
-                temp.resolve("raw"), location("default"), expected,
-                copyingCompiler(new AtomicInteger())));
-        assertFalse(Files.exists(paths.convertedObjects(testProfile())
-                .resolve(expected + ".mxc")));
-    }
-
-    @Test
-    void backingFailureInvalidationDefeatsStableStampValidationMemo() throws Exception {
-        var paths = new SharedCachePaths(temp.resolve("memo"));
-        var profile = testProfile();
-        var store = new ConvertedObjectStore(paths, new AtomicSharedCache(paths), profile);
-        store.commit(new RawCompileResult(fixtureHash, fixture), location("default"));
-        var object = paths.convertedObjects(profile).resolve(fixtureHash + ".mxc");
-        var modified = Files.getLastModifiedTime(object);
-        var bytes = Files.readAllBytes(object);
-        bytes[0] ^= 1;
-        Files.write(object, bytes);
-        Files.setLastModifiedTime(object, FileTime.fromMillis(modified.toMillis()));
-
-        assertTrue(store.openVerified(fixtureHash, location("default")).isPresent());
-        store.invalidate(fixtureHash);
-        assertTrue(store.openVerified(fixtureHash, location("default")).isEmpty());
-    }
-
-    private ConvertedObjectStore store(Path root) {
-        var paths = new SharedCachePaths(root);
-        return new ConvertedObjectStore(paths, new AtomicSharedCache(paths),
-                testProfile());
-    }
-
-    private static ConvertedObjectStore.RawCompiler copyingCompiler(AtomicInteger conversions) {
-        return (source, output) -> {
-            conversions.incrementAndGet();
-            var converted = output.resolve(fixture.getFileName());
-            Files.copy(fixture, converted);
-            return new RawCompileResult(fixtureHash, converted);
-        };
-    }
-
-    private static CatalogModelLocation location(String path) {
-        return new CatalogModelLocation(CatalogRootKind.BUILTIN, new ModelPath(path));
-    }
-
-    private static ConversionProfileId testProfile() {
-        return ConversionProfileId.from(ConversionProfileInputs.production(
-                new Hash256(new byte[32])));
     }
 }
