@@ -8,6 +8,8 @@ Client 在 private service candidate 内完成 intrinsic default 的 parse、bak
 
 Default 的独立生命周期与启动失败边界见[默认基线契约](../../product-decisions/decisions/model-fallback.md#bcdefault-startup-is-required)；会话失败降级见[session-failure](../../product-decisions/decisions/session-failure.md)。Selection 由 ID 17 `PlayerStateUpdate.model` / `ModelSelectionState` 表达，独立于 model-session collection publication。
 
+`builtin_default` 在 wire 上不携带模型 hash；client 将其应用到 player 时确定性映射到本进程常驻 default 的 `ModelId`，并作为 primary binding 使用。只有其他权威目标不可用，或尚无可应用目标时，default target 才带 fallback 标记；wire authority 与 client-local applied identity 因此是单向投影，不构成第二套选择 authority。
+
 ## 默认资产构建设计
 
 默认来源、两侧物化职责和驻留范围由[model-fallback](../../product-decisions/decisions/model-fallback.md)定义；无磁盘中间表示的设计与工程理由统一见[默认内容不建立磁盘缓存](design-rationale.md#默认内容不建立磁盘缓存)。

@@ -54,7 +54,7 @@ Roaming 当前没有删除语义，也不能作为可靠事件队列。短键碰
 
 Config form 不再有 `value` 字段：读数表达式是 `read_program.source`，写回表达式是 `write_program.source`（生产者为 `<value>=t.value`），radio 的 label 是 `repeated ConfigLabel{ string name = 1; common.Program action_program = 2; }`。UI 只读取当前值用于显示，不提交 source 之外的类型化 payload。
 
-- 打开表单时 client 对 `read_program.source` 求值一次，用结果初始化控件。
+- 打开表单时 client 对 `read_program.source` 求值，用结果初始化控件；当前 panel 保存这些读表达式到现有控件的 screen-local 投影绑定。
 - 用户操作时 client 在本地把 `read_program.source + "=" + uiValue` 拼成一段表达式（GUI 当前行为，不读取 `write_program`），用 `CustomMolangParser.parseSingleExpressionUnsafe` 解析并在本地 entity 上立即执行；本地执行不做乐观回滚，也不等待服务端确认。
-- radio label 的文案取自 `ConfigLabel.name`，点击时直接执行 `ConfigLabel.action_program.source`。
+- radio label 的文案取自 `ConfigLabel.name`，点击时直接执行 `ConfigLabel.action_program.source`；action 完成后 client 重新求值当前 panel 的全部读表达式并原位更新控件，不清空或重建 screen。重新 `init` 产生的新投影绑定会使旧异步回调失效。
 - 若该表达式不是纯 roaming 赋值，且存在远端通道且未开启低带宽模式，client 额外通过 `SubmitRouletteExpressionRequest` 把同一段表达式发给服务端；服务端按主体权限校验后以 `ExecuteMolangEvent` 广播，接收端自行解析并求值。Wire 细节见[Expression action 与本地求值](../../standards/protocol-v1/README.md#expression-action-与本地求值)。

@@ -118,7 +118,7 @@ Roaming 变量是跨玩家可见的模型自定义状态，所有权分三层：
 显式 ingress 直接复用同一套解释器，只是源来自会话而非模型：
 
 - 客户端命令与 watch：`MolangCommand`、`SimpleWatchCommand` 用 `parseSingleExpressionUnsafe` 解析命令里的源，装进调试表达式列表，每帧作为 pre/post 任务求值（`allowEmitting = false`），解析失败回报命令发送者。
-- config form：控件打开时求值 `ConfigForms.read_program.source` 取得当前值；`FlatSlider` 与 checkbox 在交互时把 `read_program.source + "=" + uiValue` 拼成一段源再解析，以 post 任务执行（`allowEmitting = true`），并在不是纯 `v.roaming.*` 赋值时提交给周围玩家；radio 的每个 label 直接执行 `ConfigLabel.action_program.source`。
+- config form：控件打开时求值 `ConfigForms.read_program.source` 取得当前值；`FlatSlider` 与 checkbox 在交互时把 `read_program.source + "=" + uiValue` 拼成一段源再解析，以 post 任务执行（`allowEmitting = true`），并在不是纯 `v.roaming.*` 赋值时提交给周围玩家；radio 的每个 label 直接执行 `ConfigLabel.action_program.source`，完成后以同一 post 队列重新求值当前 panel 的全部读表达式，并在 Minecraft thread 原位更新仍属于当前 screen 初始化周期的控件。
 - 网络执行：服务端下发的执行消息在客户端按目标 entity 解析并执行，`allowEmitting = true`。
 
 这些入口没有任何独立 session、lease 或持久化写回概念，也没有按目标 generation 绑定或回收的编译产物：它们与模型内容共用同一个解析器池和同一个求值器，执行完即结束。是否允许产生宿主效果仍由 `allowEmitting` 决定，是否允许写模型状态取决于写的是哪一类变量。
