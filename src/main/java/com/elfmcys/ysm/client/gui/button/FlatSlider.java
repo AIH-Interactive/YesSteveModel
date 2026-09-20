@@ -51,6 +51,11 @@ public class FlatSlider extends ForgeSlider implements IConfigFormsButton {
         return DECIMAL_FORMAT.format(this.getValue());
     }
 
+    public void setDisplayedValue(double value) {
+        // Projection refresh must not write the observed value back to Molang.
+        this.setValue(value);
+    }
+
     @Override
     public void renderWidget(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         final Minecraft mc = Minecraft.getInstance();

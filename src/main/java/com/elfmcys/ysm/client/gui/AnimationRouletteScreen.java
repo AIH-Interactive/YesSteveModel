@@ -51,6 +51,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix4f;
 
+import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -100,6 +101,7 @@ public class AnimationRouletteScreen extends Screen {
     private FlatColorButton scrollConfigUpBtn;
     @Nullable
     private FlatColorButton scrollConfigDownBtn;
+    private List<ConfigReadBinding> configReadBindings = List.of();
 
     private final ObjectList<StringPair> extraAnimations;
     private final Map<String, ExtraAnimationButton> buttonMap;
@@ -158,6 +160,8 @@ public class AnimationRouletteScreen extends Screen {
     @Override
     protected void init() {
         this.clearWidgets();
+        var ownerBindings = new ArrayList<ConfigReadBinding>();
+        this.configReadBindings = ownerBindings;
 
         this.x = width / 2 - 70;
         this.y = height / 2 - 8;
@@ -225,17 +229,23 @@ public class AnimationRouletteScreen extends Screen {
             final int[] yOffset = {-46};
             final int[] index = {0};
             for (ConfigForms configForm : configButtons.configForms()) {
-                this.addConfigForms(configForm, yOffset, index);
+                this.addConfigForms(configForm, yOffset, index, ownerBindings);
             }
         }
     }
 
-    private void addConfigForms(ConfigForms configForm, int[] yOffset, int[] index) {
+    private void addConfigForms(ConfigForms configForm, int[] yOffset, int[] index,
+                                List<ConfigReadBinding> ownerBindings) {
         if (configForm.type().equals("checkbox")) {
             this.executeMolang(configForm.readProgram().source(), result -> {
                 minecraft.execute(() -> {
+                    if (this.configReadBindings != ownerBindings) {
+                        return;
+                    }
                     FlatCheckbox checkbox = getFlatCheckbox(configForm, result, yOffset, index);
                     this.addRenderableWidget(checkbox);
+                    ownerBindings.add(new ConfigReadBinding(configForm.readProgram().source(),
+                            next -> updateCheckbox(checkbox, next)));
                     yOffset[0] += 14;
                     index[0]++;
                     // 最终和 110 的差就是最大滚动高度
@@ -247,8 +257,13 @@ public class AnimationRouletteScreen extends Screen {
         if (configForm.type().equals("range")) {
             this.executeMolang(configForm.readProgram().source(), result -> {
                 minecraft.execute(() -> {
+                    if (this.configReadBindings != ownerBindings) {
+                        return;
+                    }
                     FlatSlider slider = getFlatSlider(configForm, result, yOffset, index);
                     this.addRenderableWidget(slider);
+                    ownerBindings.add(new ConfigReadBinding(configForm.readProgram().source(),
+                            next -> updateSlider(slider, next)));
                     yOffset[0] += 17;
                     index[0]++;
                     // 最终和 110 的差就是最大滚动高度
@@ -260,18 +275,21 @@ public class AnimationRouletteScreen extends Screen {
         if (configForm.type().equals("radio")) {
             this.executeMolang(configForm.readProgram().source(), result -> {
                 minecraft.execute(() -> {
-                    addRatioButtons(configForm, result, yOffset, index);
+                    if (this.configReadBindings != ownerBindings) {
+                        return;
+                    }
+                    addRatioButtons(configForm, result, yOffset, index, ownerBindings);
                 });
             });
         }
     }
 
-    private void addRatioButtons(ConfigForms radioForms, String result, int[] yOffset, int[] index) {
-        int selectedIndex = Math.round(transformNumber(result));
+    private void addRatioButtons(ConfigForms radioForms, String result, int[] yOffset, int[] index,
+                                 List<ConfigReadBinding> ownerBindings) {
         var labels = radioForms.labels();
-        if (selectedIndex < 0 || labels.size() < selectedIndex) {
-            selectedIndex = 0;
-        }
+        var selectedIndex = radioIndex(result, labels.size());
+        var committedIndex = new int[]{selectedIndex};
+        var radioButtons = new ArrayList<FlatCheckbox>(labels.size());
 
         // 动态改变单选框每行个数
         // 遍历获取最长的行的长度
@@ -307,22 +325,22 @@ public class AnimationRouletteScreen extends Screen {
 
             Component labelName = Component.literal(labelStr);
             String labelValue = label.actionProgram().source();
-            boolean isSelected = selectedIndex == i;
 
             int perWidth = Math.round(110f / countPerLine);
             int xOffset = this.x + 127 + perWidth * (i % countPerLine);
 
             FlatCheckbox checkbox = new FlatCheckbox(xOffset, this.y + tempYOffset, perWidth, labelName, data -> {
-                executeMolang(labelValue, null);
+                applyRadioSelection(radioButtons, committedIndex[0]);
+                executeMolang(labelValue, ignored -> minecraft.execute(this::refreshConfigValues));
                 if (!CustomMolangParser.hasOnlyRoamingAssignment(labelValue) && NetworkHandler.isRemoteChannelPresent() && !ServerConfig.LOW_BANDWIDTH_USAGE.get()) {
                     // 同步到周围的玩家
                     ClientProtocolGateway.submitRouletteExpression(this.animatableEntity.getEntity(), labelValue);
                 }
-                this.init();
             });
-            checkbox.setStateTriggered(isSelected);
+            checkbox.setStateTriggered(selectedIndex == i);
 
             this.addRenderableWidget(checkbox);
+            radioButtons.add(checkbox);
 
             // 每满 countPerLine 个时，换行
             if (i % countPerLine == (countPerLine - 1)) {
@@ -336,6 +354,15 @@ public class AnimationRouletteScreen extends Screen {
 
         // 最终和 110 的差就是最大滚动高度
         this.maxScrollY = Math.max(0, yOffset[0] - 110);
+
+        ownerBindings.add(new ConfigReadBinding(radioForms.readProgram().source(), next -> {
+            int nextIndex = radioIndex(next, labels.size());
+            if (nextIndex < 0) {
+                return;
+            }
+            committedIndex[0] = nextIndex;
+            applyRadioSelection(radioButtons, nextIndex);
+        }));
     }
 
     @NotNull
@@ -345,9 +372,10 @@ public class AnimationRouletteScreen extends Screen {
 
         Component title = Component.literal(titleStr);
         Tooltip description = Tooltip.create(Component.literal(descStr));
-        float number = transformNumber(result);
+        Float number = transformNumber(result);
 
-        FlatSlider slider = new FlatSlider(this.x + 125, this.y + yOffset[0], title, number,
+        FlatSlider slider = new FlatSlider(this.x + 125, this.y + yOffset[0], title,
+                number == null ? 0 : number,
                 this.animatableEntity, rangeForms.readProgram().source(), rangeForms.step(),
                 rangeForms.min(), rangeForms.max());
         slider.setTooltip(description);
@@ -363,7 +391,7 @@ public class AnimationRouletteScreen extends Screen {
         Component title = Component.literal(titleStr);
         Tooltip description = Tooltip.create(Component.literal(descStr));
 
-        float number = transformNumber(result);
+        Float number = transformNumber(result);
 
         FlatCheckbox checkbox = new FlatCheckbox(this.x + 125, this.y + yOffset[0], title, data -> {
             // 手动拼接 molang 字符串进行赋值操作
@@ -382,24 +410,66 @@ public class AnimationRouletteScreen extends Screen {
                 super.renderWidget(graphics, mouseX, mouseY, partialTicks);
             }
         };
-        checkbox.setStateTriggered(number > 0);
+        checkbox.setStateTriggered(number != null && number > 0);
         checkbox.setTooltip(description);
 
         return checkbox;
     }
 
-    private float transformNumber(String result) {
-        float number;
+    @Nullable
+    static Float transformNumber(String result) {
         if ("null".equals(result)) {
-            number = 0;
+            return 0f;
         } else if (NumberUtils.isParsable(result)) {
-            number = Float.parseFloat(result);
+            float number = Float.parseFloat(result);
+            return Float.isFinite(number) ? number : null;
         } else if (BooleanUtils.toBooleanObject(result) != null) {
-            number = BooleanUtils.toBoolean(result) ? 1 : 0;
-        } else {
-            number = 0;
+            return BooleanUtils.toBoolean(result) ? 1f : 0f;
         }
-        return number;
+        return null;
+    }
+
+    static int radioIndex(String result, int labelCount) {
+        Float number = transformNumber(result);
+        if (number == null) {
+            return -1;
+        }
+        int selectedIndex = Math.round(number);
+        return 0 <= selectedIndex && selectedIndex < labelCount ? selectedIndex : -1;
+    }
+
+    private static void applyRadioSelection(List<FlatCheckbox> radioButtons, int selectedIndex) {
+        for (int i = 0; i < radioButtons.size(); i++) {
+            radioButtons.get(i).setStateTriggered(i == selectedIndex);
+        }
+    }
+
+    private static void updateCheckbox(FlatCheckbox checkbox, String result) {
+        Float number = transformNumber(result);
+        if (number != null) {
+            checkbox.setStateTriggered(number > 0);
+        }
+    }
+
+    private static void updateSlider(FlatSlider slider, String result) {
+        Float number = transformNumber(result);
+        if (number != null) {
+            slider.setDisplayedValue(number);
+        }
+    }
+
+    private void refreshConfigValues() {
+        if (minecraft.screen != this) {
+            return;
+        }
+        var ownerBindings = this.configReadBindings;
+        for (var binding : ownerBindings) {
+            executeMolang(binding.expression(), result -> minecraft.execute(() -> {
+                if (minecraft.screen == this && this.configReadBindings == ownerBindings) {
+                    binding.applyResult().accept(result);
+                }
+            }));
+        }
     }
 
     @Override
@@ -632,6 +702,9 @@ public class AnimationRouletteScreen extends Screen {
     @Override
     public boolean isPauseScreen() {
         return false;
+    }
+
+    private record ConfigReadBinding(String expression, Consumer<String> applyResult) {
     }
 
     private void drawRouletteText(GuiGraphics graphics) {
