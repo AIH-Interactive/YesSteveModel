@@ -41,7 +41,7 @@ public class AnimationParallelTicker {
             }
 
             animatable.checkModelUpdate();
-            if (!animatable.canUpdateAsync() || !animatable.isInitialized() || !animatable.isModelPresent()) {
+            if (!animatable.canUpdateAsync() || !animatable.isInitialized() || !animatable.hasRenderableModel()) {
                 continue;
             }
 

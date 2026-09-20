@@ -241,6 +241,8 @@ public abstract class AnimatableEntity<TEntity extends Entity> {
                     currentFrameExtracted = true;
                 }
                 extractRenderData(event, renderData);
+            } else {
+                renderData.ctx = context;
             }
             return renderData;
         }
@@ -432,6 +434,10 @@ public abstract class AnimatableEntity<TEntity extends Entity> {
     @Nullable
     public final AnimatedGeoModel getLoadedGeoModel() {
         return currentModel;
+    }
+
+    public final boolean hasRenderableModel() {
+        return currentModel != null;
     }
 
     /**
