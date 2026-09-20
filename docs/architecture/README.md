@@ -16,8 +16,8 @@ YSM 的业务权威在 Java 领域层：它决定模型来源、身份、授权�
 | 哪个模型可见、是否 Ready、谁保活资源 | [模型管理](model-management/README.md) | `model.catalog`、`model.session`、`client.model.internal` |
 | 哪条连接裁决、分片何时完成、谁调度发送 | [网络](network/README.md) | `network.NetworkHandler`、`network.forge`、`ResourceDispatchWorker` |
 | 动画状态、Molang、骨骼输出为何变化 | [动画](animation/README.md) | `AnimatableEntity`、`IAnimationController`、`AnimationProcessor` |
-| 几何烘焙、帧调度、顶点或透明排序 | [渲染](rendering/README.md) | `NativeRenderer`、`ysm::bake::BakeModel`、`ysm::renderer` |
-| Native 加载、JNI 失败、buffer 或 handle 生命周期 | [Native 运行边界](native-runtime/README.md) | `util.NativeLibUtil`、`natives`、`buffer`、`ysm::java` |
+| 几何烘焙、帧调度、顶点或透明排序 | [渲染](rendering/README.md) | `NativeRenderer`、`ysm::gfx::bake::BakeModel`、`ysm::gfx::renderer` |
+| Native 分层、加载、JNI 失败、buffer 或 handle 生命周期 | [Native 运行边界](native-runtime/README.md) | `util.NativeLibUtil`、`natives`、`buffer`、`ysm::lib`、`ysm::java`、`ysm::codec` |
 | 模型卡、预览、翻页、选择与页面资源 | [客户端展示](client-presentation/README.md) | `client.gui`、`ClientAssetBatch`、`EntityModelBinding` |
 | Forge 接入、第三方扩展、locator 与 render hook | [游戏与扩展接入](integration/README.md) | `api`、`client.compat`、`GeoReplacedEntityRenderer` |
 

@@ -61,8 +61,8 @@ flowchart TB
 
 | 要检查的边界 | Java 入口 | Native 入口 |
 |---|---|---|
-| 资源到静态几何 | `natives.render.NativeBakedModel` | `ysm::bake::BakeModel`、`BakedModel` |
+| 资源到静态几何 | `natives.render.NativeBakedModel` | `ysm::gfx::bake::BakeModel`、`BakedModel` |
 | 骨骼数组到帧状态 | `GeoModelState`、`natives.render.NativeModelState` | `ModelState::Extract`、`RenderSchedule` |
-| Draw 到输出区间 | `natives.render.NativeRenderer.render()`、`VertexBufferAccessor`、`FallbackVertexWriter` | `ysm::renderer::Render`、`RenderParameters` |
+| Draw 到输出区间 | `natives.render.NativeRenderer.render()`、`VertexBufferAccessor`、`FallbackVertexWriter` | `ysm::gfx::renderer::Render`、`RenderParameters` |
 
 Java 包名前缀为 `com.elfmcys.ysm`。跨 JNI 保活见[JNI 与内存](../native-runtime/jni-and-memory.md)，可取消绘制窗口见[游戏与扩展接入](../integration/README.md)。
