@@ -9,6 +9,7 @@ import com.elfmcys.ysm.capability.PlayerAnimatableCapabilityProvider;
 import com.elfmcys.ysm.config.ServerConfig;
 import com.elfmcys.ysm.geckolib3.core.molang.util.StringPool;
 import com.elfmcys.ysm.model.domain.Hash256;
+import com.elfmcys.ysm.model.service.ClientModelService;
 import com.elfmcys.ysm.model.service.ServerModelService;
 import com.elfmcys.ysm.model.session.server.ServerModelSession;
 import com.elfmcys.ysm.network.NetworkHandler;
@@ -33,6 +34,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
 import net.minecraftforge.network.NetworkEvent;
+import org.jetbrains.annotations.Nullable;
 
 public final class PlayerStateHandler {
     private static final int MAX_ANIMATION_ID_BYTES = 256;
@@ -296,13 +298,19 @@ public final class PlayerStateHandler {
         }
         player.getCapability(PlayerAnimatableCapabilityProvider.CAP).ifPresent(capability -> {
             var full = update.mode() == StateWriteMode.STATE_WRITE_MODE_FULL;
+            var authoritativeModelHash = update.hasModel()
+                    ? ModelReferenceCodec.read(update.modelUnsafe().model()) : null;
+            var appliedModelHash = update.hasModel()
+                    ? appliedPlayerModelHash(
+                            authoritativeModelHash,
+                            ClientModelService.instance().defaultRenderTarget().modelHash())
+                    : null;
             if (full) {
                 capability.getStateTracker().reset();
             }
             if (update.hasModel()) {
                 var model = update.modelUnsafe();
-                Hash256 hash = ModelReferenceCodec.read(model.model());
-                capability.updateModelAndTexture(hash, model.textureId());
+                capability.updateModelAndTexture(appliedModelHash, model.textureId());
                 capability.setDisabled(model.disabled());
             }
             capability.getStateTracker().updateProtocolState(
@@ -329,11 +337,15 @@ public final class PlayerStateHandler {
                 }
             }
             if (full && player == Minecraft.getInstance().player) {
-                var modelHash = ModelReferenceCodec.read(update.modelUnsafe().model());
-                ClientProtocolGateway.acceptAuthoritativeFull(modelHash,
-                        selfFullRoamingKey(update, modelHash));
+                ClientProtocolGateway.acceptAuthoritativeFull(authoritativeModelHash,
+                        selfFullRoamingKey(update, appliedModelHash));
             }
         });
+    }
+
+    static Hash256 appliedPlayerModelHash(@Nullable Hash256 authoritativeModelHash,
+                                          Hash256 builtinDefaultHash) {
+        return authoritativeModelHash == null ? builtinDefaultHash : authoritativeModelHash;
     }
 
     /**

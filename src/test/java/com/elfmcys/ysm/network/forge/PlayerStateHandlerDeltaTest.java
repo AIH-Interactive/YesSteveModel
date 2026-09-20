@@ -78,6 +78,17 @@ class PlayerStateHandlerDeltaTest {
         assertNull(builtinDefault);
     }
 
+    @Test
+    void builtinDefaultAppliesAsTheConcreteLocalModelIdentity() {
+        var selected = hash(10);
+        var builtinDefault = hash(11);
+
+        assertEquals(selected,
+                PlayerStateHandler.appliedPlayerModelHash(selected, builtinDefault));
+        assertEquals(builtinDefault,
+                PlayerStateHandler.appliedPlayerModelHash(null, builtinDefault));
+    }
+
     private static Hash256 hash(int seed) {
         var bytes = new byte[Hash256.SIZE];
         bytes[0] = (byte) seed;

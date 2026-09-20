@@ -42,9 +42,38 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EntityModelBindingTest {
     private static final BakeProfile PROFILE = new BakeProfile("test");
+
+    @Test
+    void authoritativeDefaultUsesPrimaryWhileMissingSelectionUsesFallback() throws Exception {
+        var defaultId = hash(101);
+        var primaryModels = new FakeModelAccess();
+        primaryModels.defaultId = defaultId;
+        primaryModels.contents.put(defaultId, content(defaultId));
+        primaryModels.offlineResults.add(CompletableFuture.completedFuture(
+                Optional.of(FakeLease.ready(defaultId, target()))));
+        var primary = new EntityModelBinding(primaryModels);
+
+        primary.updateModelHash(defaultId);
+        primary.synchronize("player", "default", "player", EntityModelBindingTest::holder);
+
+        assertSame(defaultId, primary.modelHash());
+        assertFalse(primary.resourceHolder().fallback);
+
+        var fallbackModels = new FakeModelAccess();
+        fallbackModels.defaultId = defaultId;
+        fallbackModels.leases.add(FakeLease.ready(defaultId, target()));
+        var fallback = new EntityModelBinding(fallbackModels);
+
+        fallback.updateModelHash(null);
+        fallback.synchronize("player", "", "player", EntityModelBindingTest::holder);
+
+        assertNull(fallback.modelHash());
+        assertTrue(fallback.resourceHolder().fallback);
+    }
 
     @Test
     void replacementKeepsReadyLeasesCleanerManagedAndCancelsReplacedPending() throws Exception {
